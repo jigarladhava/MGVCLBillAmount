@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MGVCL Bill Amount Extractor</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>MGVCL Bill Amount Extractor</h1>
+            <p>Upload Excel file with consumer numbers to extract billing data</p>
+        </header>
+
+        <main>
+            <!-- File Upload Section -->
+            <section class="upload-section" id="uploadSection">
+                <div class="upload-card">
+                    <h2>Upload Consumer Numbers</h2>
+                    <form id="uploadForm" enctype="multipart/form-data">
+                        <div class="file-input-wrapper">
+                            <input type="file" id="excelFile" name="excelFile" accept=".xlsx,.xls" required>
+                            <label for="excelFile" class="file-input-label">
+                                <span class="file-icon">📁</span>
+                                <span class="file-text">Choose Excel File</span>
+                            </label>
+                        </div>
+                        <div class="file-info" id="fileInfo" style="display: none;">
+                            <span id="fileName"></span>
+                            <span id="fileSize"></span>
+                        </div>
+                        <button type="submit" class="btn btn-primary" id="uploadBtn">
+                            <span class="btn-text">Start Processing</span>
+                            <span class="btn-loader" style="display: none;">⏳</span>
+                        </button>
+                    </form>
+                    <div class="upload-help">
+                        <p><strong>File Format:</strong> Excel file (.xlsx or .xls)</p>
+                        <p><strong>Structure:</strong> Consumer numbers should be in the first column</p>
+                        <p><a href="#" id="downloadTemplate">Download Sample Template</a></p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Processing Section -->
+            <section class="processing-section" id="processingSection" style="display: none;">
+                <div class="processing-card">
+                    <h2>Processing Status</h2>
+                    <div class="progress-info">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progressFill"></div>
+                        </div>
+                        <div class="progress-text">
+                            <span id="progressText">0 / 0 processed</span>
+                            <span id="progressPercent">0%</span>
+                        </div>
+                    </div>
+                    
+                    <div class="current-processing" id="currentProcessing">
+                        <h3>Current Consumer: <span id="currentConsumer">-</span></h3>
+                        <p>Browser: <span id="currentBrowser">-</span></p>
+                    </div>
+
+                    <div class="browser-status">
+                        <h3>Browser Status</h3>
+                        <div class="browser-grid" id="browserGrid">
+                            <!-- Browser status items will be added dynamically -->
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Captcha Section -->
+            <section class="captcha-section" id="captchaSection" style="display: none;">
+                <div class="captcha-card">
+                    <h2>Captcha Required</h2>
+                    <div class="captcha-info">
+                        <p><strong>Consumer:</strong> <span id="captchaConsumer">-</span></p>
+                        <p><strong>Browser:</strong> <span id="captchaBrowser">-</span></p>
+                    </div>
+                    
+                    <div class="captcha-image-container">
+                        <img id="captchaImage" src="" alt="Captcha Image" style="display: none;">
+                    </div>
+                    
+                    <form id="captchaForm">
+                        <div class="captcha-input-group">
+                            <input type="text" id="captchaInput" placeholder="Enter captcha text" required>
+                            <button type="submit" class="btn btn-success">Submit</button>
+                        </div>
+                    </form>
+                    
+                    <div class="captcha-queue" id="captchaQueue">
+                        <h4>Pending Captchas: <span id="queueCount">0</span></h4>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Results Section -->
+            <section class="results-section" id="resultsSection" style="display: none;">
+                <div class="results-card">
+                    <h2>Processing Complete</h2>
+                    <div class="results-summary">
+                        <div class="summary-item">
+                            <span class="summary-label">Total Processed:</span>
+                            <span class="summary-value" id="totalProcessed">0</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">Successful:</span>
+                            <span class="summary-value success" id="successCount">0</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">Failed:</span>
+                            <span class="summary-value error" id="failCount">0</span>
+                        </div>
+                    </div>
+                    
+                    <div class="results-actions">
+                        <button class="btn btn-primary" id="downloadResults">
+                            📥 Download Results
+                        </button>
+                        <button class="btn btn-secondary" id="startNew">
+                            🔄 Process New File
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Log Section -->
+            <section class="log-section">
+                <div class="log-card">
+                    <h3>Activity Log</h3>
+                    <div class="log-container" id="logContainer">
+                        <div class="log-entry">
+                            <span class="log-time">[Ready]</span>
+                            <span class="log-message">System ready for file upload</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

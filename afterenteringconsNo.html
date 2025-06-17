@@ -1,0 +1,983 @@
+<html><head>
+<title>Quick Pay GUVNL Paytm</title>
+<meta name="GENERATOR" content="paytm">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+
+<link rel="stylesheet" href="./support/bootstrap.min.css">
+<script src="./support/jquery.js"></script>
+<script src="./support/bootstrap.min.js"></script>
+
+
+
+<script type="text/javascript">
+//take only numbers in the textbox
+$(document).ready(function() {
+
+
+//accept only number
+    $("#consnumber,#payamount,#MOBILE_NO").keydown(function (e) {
+        // Allow: backspace, delete, tab, escape, enter and .
+        if ($.inArray(e.keyCode, [46, 8, 9, 27, 13, 110, 190]) !== -1 ||
+             // Allow: Ctrl+A, Command+A
+            (e.keyCode === 65 && (e.ctrlKey === true || e.metaKey === true)) || 
+             // Allow: home, end, left, right, down, up
+            (e.keyCode >= 35 && e.keyCode <= 40)) {
+                 // let it happen, don't do anything
+                 return;
+        }
+        // Ensure that it is a number and stop the keypress
+        if ((e.shiftKey || (e.keyCode < 48 || e.keyCode > 57)) && (e.keyCode < 96 || e.keyCode > 105)) {
+	
+            e.preventDefault();
+        }
+    });
+
+//accept only numbers
+
+
+
+//clear onload radio button
+$('input[type="radio"]').attr('checked',false);
+$("input:radio").attr("checked", false);
+$("input:radio").removeAttr("checked");
+//clear onload radio button
+
+
+
+
+
+
+$("#paytm").click(function() {
+//alert(document.PayForm.action);
+
+var payamount = $('#payamount').val();
+var MOBILE_NO = $('#MOBILE_NO').val();
+var EMAIL = $('#EMAIL').val();
+
+//no empty accepted
+if(payamount=='' )
+{
+alert('No field should be kept blank');
+return false;
+}
+//no empty accepted
+
+
+//validate email
+var reEmail = /^(?:[\w\!\#\$\%\&\'\*\+\-\/\=\?\^\`\{\|\}\~]+\.)*[\w\!\#\$\%\&\'\*\+\-\/\=\?\^\`\{\|\}\~]+@(?:(?:(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-](?!\.)){0,61}[a-zA-Z0-9]?\.)+[a-zA-Z0-9](?:[a-zA-Z0-9\-](?!$)){0,61}[a-zA-Z0-9]?)|(?:\[(?:(?:[01]?\d{1,2}|2[0-4]\d|25[0-5])\.){3}(?:[01]?\d{1,2}|2[0-4]\d|25[0-5])\]))$/;
+
+  /* if(!EMAIL.match(reEmail)) {
+    alert("Invalid email address");
+    return false;
+  } */
+//validate email
+
+
+//validate mobile no
+var mob = /^[1-9]{1}[0-9]{9}$/;
+/* if (mob.test(MOBILE_NO) == false) {
+    alert("Please enter valid mobile number.");
+    return false;
+}
+
+if(MOBILE_NO.length!=10){
+	alert("Mobile Number should be 10 Digits long");
+	return false;
+} */
+//validate mobile no
+
+
+});
+
+
+
+
+
+//tool tip jquery
+//    $('[data-toggle="tooltip"]').tooltip();
+
+
+var consnumber = $('#consnumber').val();
+var payamount = $('#payamount').val();
+var MOBILE_NO = $('#MOBILE_NO').val();
+
+if(consnumber==null||payamount==null||MOBILE_NO==null){
+    $('[data-toggle="tooltip"]').tooltip();
+
+}
+//tool tip jquery
+
+
+
+//clear onload radio button
+$('input[type="radio"]').attr('checked',false);
+//clear onload radio button
+
+
+//to toggle between payment option
+
+    $('input[type="radio"]').click(function(){
+        var paymentoption = $(this).attr("value");
+
+	if(paymentoption=='paytm'){
+	$("#paytm").show(500);
+	$("#billdesk").hide(500);
+	}
+
+	if(paymentoption=='billdesk'){
+	 $("#paytm").hide(500);
+        $("#billdesk").show(500);
+	}
+    });
+//to toggle between payment option
+
+
+
+//get company name from url
+var getUrlParameter = function getUrlParameter(sParam) {
+    var sPageURL = window.location.search.substring(1),
+        sURLVariables = sPageURL.split('&'),
+        sParameterName,
+        i;
+
+    for (i = 0; i < sURLVariables.length; i++) {
+        sParameterName = sURLVariables[i].split('=');
+
+        if (sParameterName[0] === sParam) {
+            return sParameterName[1] === undefined ? true : decodeURIComponent(sParameterName[1]);
+        }
+    }
+};
+
+var companyname = getUrlParameter('company');
+if(companyname!=undefined)
+var companyname = companyname.toUpperCase();
+//alert(companyname);
+//get company name from url
+
+
+	if(companyname!='' && companyname!='DGVCL' && companyname!='MGVCL' && companyname!='PGVCL' && companyname!='UGVCL')
+	{
+	//alert('Please select one Company name');
+	}
+
+	if(companyname=='')
+	{
+	alert('Company Name should not be kept blank');
+	}
+
+	 if(companyname=='DGVCL')
+        {
+        //sessionStorage.setItem("companyurl","MOBAPPDG");
+        sessionStorage.setItem("company","dgvcl");
+        $('#company').val('DGVCL');
+        $('#selectcompanynamewell').hide(500);
+        $('#inputconsnumber').show(500);
+	$("#company_logo").attr("src","./images/dgvcl_logo.jpg");
+        }
+
+        if(companyname=='MGVCL')
+        {
+        //sessionStorage.setItem("companyurl","MOBAPPMG");
+        sessionStorage.setItem("company","mgvcl");
+        $('#company').val('MGVCL');
+        $('#selectcompanynamewell').hide(500);
+        $('#inputconsnumber').show(500);
+        $("#company_logo").attr("src","./images/mgvcl_logo.jpg");
+
+        }
+
+        if(companyname=='PGVCL')
+        {
+        //sessionStorage.setItem("companyurl","MOBAPPPG");
+        sessionStorage.setItem("company","pgvcl");
+        $('#company').val('PGVCL');
+        $('#selectcompanynamewell').hide(500);
+        $('#inputconsnumber').show(500);
+        $("#company_logo").attr("src","./images/pgvcl_logo.jpg");
+
+        }
+
+        if(companyname=='UGVCL')
+        {
+        //sessionStorage.setItem("companyurl","MOBAPPUG");
+        sessionStorage.setItem("company","ugvcl");
+        $('#company').val('UGVCL');
+        $('#selectcompanynamewell').hide(500);
+        $('#inputconsnumber').show(500);
+        $("#company_logo").attr("src","./images/ugvcl_logo.jpg");
+
+        }
+
+
+
+
+
+//select company name
+$('#companyname').val('noname');
+
+$(function() {
+   $('#companyname').on('change', function(){
+
+	var companyname = $(this).val();
+
+
+	if(companyname=='noname')
+	{
+	alert('Please select one Company name');
+	}
+
+	if(companyname=='')
+	{
+	alert('Company Name should not be kept blank');
+	}
+
+	 if(companyname=='DGVCL')
+        {
+        //sessionStorage.setItem("companyurl","MOBAPPDG");
+        sessionStorage.setItem("company","dgvcl");
+        $('#company').val('DGVCL');
+        $('#selectcompanynamewell').hide(500);
+        $('#inputconsnumber').show(500);
+	$("#company_logo").attr("src","./images/dgvcl_logo.jpg");
+        }
+
+        if(companyname=='MGVCL')
+        {
+        //sessionStorage.setItem("companyurl","MOBAPPMG");
+        sessionStorage.setItem("company","mgvcl");
+        $('#company').val('MGVCL');
+        $('#selectcompanynamewell').hide(500);
+        $('#inputconsnumber').show(500);
+        $("#company_logo").attr("src","./images/mgvcl_logo.jpg");
+
+        }
+
+        if(companyname=='PGVCL')
+        {
+        //sessionStorage.setItem("companyurl","MOBAPPPG");
+        sessionStorage.setItem("company","pgvcl");
+        $('#company').val('PGVCL');
+        $('#selectcompanynamewell').hide(500);
+        $('#inputconsnumber').show(500);
+        $("#company_logo").attr("src","./images/pgvcl_logo.jpg");
+
+        }
+
+        if(companyname=='UGVCL')
+        {
+        //sessionStorage.setItem("companyurl","MOBAPPUG");
+        sessionStorage.setItem("company","ugvcl");
+        $('#company').val('UGVCL');
+        $('#selectcompanynamewell').hide(500);
+        $('#inputconsnumber').show(500);
+        $("#company_logo").attr("src","./images/ugvcl_logo.jpg");
+
+        }
+
+	
+   });
+});
+
+//select company name
+
+
+
+
+});
+
+
+
+
+
+
+/*bill desk logic*/
+function billdeskredirect(){
+
+//alert('billdisk called');
+
+var CUST_ID=$('#CUST_ID').val();
+var company=$('#company').val();
+var payamount = $('#payamount').val();
+var MOBILE_NO = $('#MOBILE_NO').val();
+var EMAIL = $('#EMAIL').val();
+var ConsumerName=$('#ConsumerName').val();
+
+var INDUSTRY_TYPE_ID = $('#INDUSTRY_TYPE_ID').val();
+var CHANNEL_ID = $('#CHANNEL_ID').val();
+var MERC_UNQ_REF = $('#MERC_UNQ_REF').val();
+
+var MERC_UNQ_REF= encodeURI(MERC_UNQ_REF);
+var ORDER_ID = $('#ORDER_ID').val();
+
+
+
+
+//no empty accepted
+if(payamount=='' )
+{
+alert('No field should be kept blank');
+return false;
+}
+if (payamount <= 0)
+{
+    alert('Please enter amount to pay');
+    return false;
+}
+//no empty accepted
+
+
+//validate email
+var reEmail = /^(?:[\w\!\#\$\%\&\'\*\+\-\/\=\?\^\`\{\|\}\~]+\.)*[\w\!\#\$\%\&\'\*\+\-\/\=\?\^\`\{\|\}\~]+@(?:(?:(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-](?!\.)){0,61}[a-zA-Z0-9]?\.)+[a-zA-Z0-9](?:[a-zA-Z0-9\-](?!$)){0,61}[a-zA-Z0-9]?)|(?:\[(?:(?:[01]?\d{1,2}|2[0-4]\d|25[0-5])\.){3}(?:[01]?\d{1,2}|2[0-4]\d|25[0-5])\]))$/;
+
+  /* if(!EMAIL.match(reEmail)) {
+    alert("Invalid email address");
+    return false;
+  } */
+//validate email
+
+
+//validate mobile no
+var mob = /^[1-9]{1}[0-9]{9}$/;
+/* if (mob.test(MOBILE_NO) == false) {
+    alert("Please enter valid mobile number.");
+    return false;
+}
+
+if(MOBILE_NO.length!=10){
+        alert("Mobile Number should be 10 Digits long");
+        return false;
+} */
+//validate mobile no
+
+
+	if(payamount!='')
+	{
+	//alert('everything oke');
+
+	if(company=='UGVCL')
+        {
+	document.PayForm.action="https://powerapi.guvnl.in/paytm/BillDeskGW/diSclAim1.php";
+          //window.open('https://powerapi.guvnl.in/paytm/BillDeskGW/diSclAim1.php?ConsuNum='+CUST_ID+'&PayAmount='+payamount+'&company='+company+'&ORDER_ID='+ORDER_ID+'&ConsumerName='+ConsumerName,'_self','location=no','hardwareback=no','hidden=yes');
+         //window.open('https://powerapi.guvnl.in/paytm/BillDeskGW/diSclAim1.php?ConsuNum='+CUST_ID+'&PayAmount='+payamount+'&company='+company+'&ORDER_ID='+ORDER_ID+'&ConsumerName='+ConsumerName+'&INDUSTRY_TYPE_ID='+INDUSTRY_TYPE_ID+'&CHANNEL_ID='+CHANNEL_ID+'&MERC_UNQ_REF='+encodeURIComponent(MERC_UNQ_REF),'_self','location=no','hardwareback=no','hidden=yes');
+        }
+	else if(company=='PGVCL')
+        {
+	document.PayForm.action="https://powerapi.guvnl.in/paytm/BillDeskGW/diSclAim2.php";
+	//window.open('https://powerapi.guvnl.in/paytm/BillDeskGW/diSclAim2.php?ConsuNum='+CUST_ID+'&PayAmount='+payamount+'&company='+company+'&ORDER_ID='+ORDER_ID+'&ConsumerName='+ConsumerName,'_self','location=no','hardwareback=no','hidden=yes');
+//         window.open('https://powerapi.guvnl.in/paytm/BillDeskGW/diSclAim2.php?ConsuNum='+CUST_ID+'&PayAmount='+payamount+'&Payemail='+EMAIL+'&paymobnumber='+ MOBILE_NO+'&company='+company+'&ORDER_ID='+ORDER_ID+'&ConsumerName='+ConsumerName+'&INDUSTRY_TYPE_ID='+INDUSTRY_TYPE_ID+'&CHANNEL_ID='+CHANNEL_ID+'&MERC_UNQ_REF='+encodeURIComponent(MERC_UNQ_REF),'_self','location=no','hardwareback=no','hidden=yes');
+        }
+	else if(company=='MGVCL')
+        {
+	//alert(document.PayForm.action);
+	document.PayForm.action="https://powerapi.guvnl.in/paytm/BillDeskGW/diSclAim3.php";
+	// window.open('https://powerapi.guvnl.in/paytm/BillDeskGW/diSclAim3.php?ConsuNum='+CUST_ID+'&PayAmount='+payamount+'&company='+company+'&ORDER_ID='+ORDER_ID+'&ConsumerName='+ConsumerName,'_self','location=no','hardwareback=no','hidden=yes');
+         //window.open('https://powerapi.guvnl.in/paytm/BillDeskGW/diSclAim3.php?ConsuNum='+CUST_ID+'&PayAmount='+payamount+'&Payemail='+EMAIL+'&paymobnumber='+ MOBILE_NO+'&company='+company+'&ORDER_ID='+ORDER_ID+'&ConsumerName='+ConsumerName+'&INDUSTRY_TYPE_ID='+INDUSTRY_TYPE_ID+'&CHANNEL_ID='+CHANNEL_ID+'&MERC_UNQ_REF='+encodeURIComponent(MERC_UNQ_REF),'_self','location=no','hardwareback=no','hidden=yes');
+        }
+
+        else if(company=='DGVCL')
+        {
+	 document.PayForm.action="https://powerapi.guvnl.in/paytm/BillDeskGW/diSclAim4.php";
+	//window.open('https://powerapi.guvnl.in/paytm/BillDeskGW/diSclAim4.php?ConsuNum='+CUST_ID+'&PayAmount='+payamount+'&company='+company+'&ORDER_ID='+ORDER_ID+'&ConsumerName='+ConsumerName,'_self','location=no','hardwareback=no','hidden=yes');
+        //window.open('https://powerapi.guvnl.in/paytm/BillDeskGW/diSclAim4.php?ConsuNum='+CUST_ID+'&PayAmount='+payamount+'&Payemail='+EMAIL+'&paymobnumber='+ MOBILE_NO+'&company='+company+'&ORDER_ID='+ORDER_ID+'&ConsumerName='+ConsumerName+'&INDUSTRY_TYPE_ID='+INDUSTRY_TYPE_ID+'&CHANNEL_ID='+CHANNEL_ID+'&MERC_UNQ_REF='+encodeURIComponent(MERC_UNQ_REF),'_self','location=no','hardwareback=no','hidden=yes');
+        }
+
+	
+}
+
+
+	}
+
+
+/*billdesk logic*/
+
+
+
+
+
+	function checkcosnumerno() {
+	var consnumber = $("#consnumber").val();
+
+//alert(consnumber);
+	if(consnumber=='')
+	{
+	alert('Field Cannot be kept empty');
+	e.preventDefault();
+	}
+
+
+	var str = consnumber;
+	var n = str.length; 
+/*
+	if(n!=11)
+	{
+	alert('consumer number should be 11 digit long');
+	e.preventDefault();
+	}
+*/
+                $("#myModal").modal('show');
+
+
+
+//get session data and get company name
+var companyurl=sessionStorage.getItem("companyurl");
+//get session data and ger company name
+
+var company=sessionStorage.getItem("company");
+//alert(company);
+
+
+var cap_code=$("#cap_code").val();
+//alert(cap_code);
+
+$.ajax({
+
+	//fetch consumer details
+	//url:'https://mpay.guvnl.in/GetConsStatus.php',
+	url:'https://mpay.guvnl.in/paytmservices/GetConsStatus.php',
+	//fetch consumer details
+
+
+         data: JSON.stringify({ consno: consnumber,company:company,cap_cod:cap_code }),
+         type:'post',
+		 processData: false,
+		 contentType: "application/json; charset=UTF-8",
+         cache:true,
+       success: function(response) {
+
+	console.log(response);
+		console.log(response);
+		var obj=JSON.parse(response);
+		//console.log(obj);
+		
+	//console.log(obj.v_status);
+
+	if(obj.v_status=='Y'){
+
+
+		$('#ConsumerName').val(obj.v_cons_name);
+                $('#CUST_ID').val(obj.v_cons_no);
+		$("#lastpaid").val(obj.last_paid_detail);
+		$("#billamt").val(obj.last_bill_amount);
+		$("#billdate").val(obj.last_bill_date);
+		 if(obj.OutAmount<0)
+                $("#payamount").val(0);
+                else
+                $("#payamount").val(obj.OutAmount);
+		$('#v_status').val(obj.v_status);
+var company=sessionStorage.getItem("company");
+		//console.log("company="+company+"done");
+		var url="https://mpay.guvnl.in/paytm/QuickPay.php?company="+company;
+		console.log("url="+url);
+		$('#anothertrans').attr('href',url);
+		$('#anothertrans1').attr('href',url);
+
+               $('#MERC_UNQ_REF').val(obj.cons_location);
+                $("#inputconsnumber").hide(500);
+                $("#detailconsnumber").show(500);
+                $("#paytmtransstatus").hide(500);
+var company=sessionStorage.getItem("company");
+//alert(company);
+
+
+//company logo change
+if(company=='dgvcl')
+{
+        $("#company_logo2").attr("src","./images/dgvcl_logo.jpg");
+}
+if(company=='mgvcl')
+{
+        $("#company_logo2").attr("src","./images/mgvcl_logo.jpg");
+}
+if(company=='ugvcl')
+{
+        $("#company_logo2").attr("src","./images/ugvcl_logo.jpg");
+}
+if(company=='pgvcl')
+{
+        $("#company_logo2").attr("src","./images/pgvcl_logo.jpg");
+}
+
+
+
+
+	}
+	/*else if(obj.v_status=='2')
+	{
+		$('#invalidcaptchmodal').modal({
+			backdrop : 'static',
+			keyboard: false
+		})
+	}
+	 else if(obj.v_status=='3')
+        {
+                $('#secondpaytry').modal({
+                        backdrop : 'static',
+                        keyboard: false
+                })
+		$('#errmsg').html(obj.error_message);
+        }
+	*/
+	else{
+	 	$('#invalidconsumerno').modal({
+   		 backdrop: 'static',
+   		 keyboard: false
+		})
+		$('#errmsg').html(obj.error_message);
+
+	}
+
+
+	                $("#myModal").modal('hide');
+
+       }, 
+       error: function() {
+		  $("#myModal").modal('show');
+           alert('Please cross verify consumer No.');
+       }
+
+      })
+
+}
+
+
+//show paytm transcation details
+function paytmtransdetails(){
+var ORDER_ID = $('#ORDER_ID').val();
+
+	if(ORDER_ID==''){
+		alert('ORDER ID cannot be kept blank');
+		return false;
+			}
+
+
+	$('#Searching_Modal').modal('show');
+	$('#paytmtransdetails').show(500);
+	$('#paytmtransstatus').hide(500);
+	$('#consnumber').hide(500);
+	$('#selectcompanynamewell').hide(500);
+
+
+}
+//show paytm transcation details
+
+function disableClick(){
+ document.onclick=function(event){
+ if (event.button == 2) {
+ alert('Right Click Message');
+ return false;
+ }
+ }
+ }
+</script>
+
+
+
+
+</head>
+<body onload="disableClick()" class="" style="">
+<div class="container">
+
+
+
+	  <div class="jumbotron" style="text-align:center;margin-top:1%">
+<!--     		<h2 style="text-shadow: 2px 2px 4px #000000;"><b>Quick Payment Portal</b></h2> -->
+		<img class="img-responsive" style="box-shadow: 7px 7px 5px grey;margin: 0 auto;" src="./images/paytm.jpg" height="250px" width="50%">
+    		<br>
+	  </div>
+
+
+
+
+         <div id="selectcompanynamewell" class="well" style="text-align: center; display: none;">
+		<h4>Select Your Company Name</h4>
+		<div id="selectbox" style="text-align:center">
+
+      		<select class="form-control" id="companyname" style="width:20%;text-align:center;margin:1% auto">
+		<option value="noname" selected="selected"><b>--Select the Company--<b></b></b></option><b><b>
+       	 	 <option value="DGVCL">DGVCL</option> 
+       		 <option value="MGVCL">MGVCL</option>
+       		<option value="PGVCL">PGVCL</option>
+       		 <option value="UGVCL">UGVCL</option> 
+      		</b></b></select><b><b>
+
+		</b></b></div><b><b>
+	</b></b></div><b><b> 
+<!-- <br>
+<button style="margin:auto;display:block;" type="button" class="btn btn-danger" onClick="location.href='https://mpay.guvnl.in/paytm/paytmstatus/TxnStatus.php' ">Check Paytm Transcation Status</button>
+<br> -->
+
+
+
+	<div id="inputconsnumber" style="text-align: center; display: none;">
+
+	<!--company logo-->
+	<!-- <img  id="company_logo" class="img-responsive" style="box-shadow: 7px 7px 5px grey;margin: 0 auto;"  height="10%" width="75%">	 -->
+	<img id="company_logo" class="img-responsive" style="box-shadow: 5px 5px 5px grey;margin: 0 auto;" height="7&quot;%&quot;" width="60%" src="./images/mgvcl_logo.jpg">	
+	<!--company logo-->
+
+<br>
+
+
+
+		<div class="well" style="margin-right: 15%;margin-left: 15%;text-align: center;">
+		<b>Enter Consumer No. (ગ્રાહક નંબર દાખલ કરો.) &nbsp;&nbsp;</b><!-- <div class='text-right'>Find Consumer No</div> -->
+		<input type="number" id="consnumber" class="form-control" tabindex="1" maxlength="11" size="11" autocomplete="off" data-toggle="tooltip" data-placement="bottom" title="Only Numbers accepted" placeholder="Enter 11 or 5 digit no." autofocus="" style="">			   
+		 <br>
+		<div>
+
+
+<div>
+<img id="captcha" class="img-responsive" style="margin: 0 auto;" src="./securimage/securimage_show.php" alt="CAPTCHA Image" width="160">
+
+<a href="#" id="diff_image" onclick="document.getElementById('captcha').src = './securimage/securimage_show.php?' + Math.random(); document.getElementById('cap_code').value=''; return false"> <img src="./images/reload.png" alt="reload captcha" height="20" width="20"></a>
+</div>
+
+<br>
+
+<input type="text" class="form-control" name="captcha_code" size="20" maxlength="6" id="cap_code" autocomplete="off" placeholder="Enter image as shown" tabindex="2" style="">
+<br>
+
+
+</div>
+<br>
+
+
+
+
+
+
+		<input value="Check Consumer No. (ગ્રાહક નંબર તપાસો.)" class="btn btn-success" type="submit" tabindex="3" onclick="checkcosnumerno()" style="">
+
+		<button type="button" class="btn btn-danger" onclick="window.location.reload()">Reload (
+ફરીથી લોડ કરો.)</button>
+	</div>
+
+	<br>
+
+</div>
+
+
+
+
+
+
+<div id="paytmtransstatus" style="text-align: center; display: none;">
+
+<!-- Previous Transcation hidden
+	<div class="well" style="margin-right: 25%;margin-left: 25%;text-align: center;">
+	<form method="post" action="">
+	<h3>Previous Transcations Status</h3>
+	<label>Enter ORDER_ID*</label>
+<br>
+	<input id="ORDER_ID" class="form-control" tabindex="0" maxlength="20" size="20" name="ORDER_ID" placeholder="ORDS55312306" autocomplete="off" value="">
+<br>
+ <input value="Submit" type="submit" onclick="paytmtransdetails()" class="btn btn-info">
+
+
+</div>
+-->
+
+
+
+
+<hr>
+<div id="paytmtransdetails" class="well">
+
+
+	<div style="text-align:center">
+		
+	</div>
+
+
+
+	
+	</div>
+
+  </div>
+
+
+
+<form id="PayForm" name="PayForm" method="post" action="pgRedirect.php">
+
+<div class="jumbotron" id="detailconsnumber" style="">
+
+
+
+
+
+<div class="well" style="text-align:center">
+
+
+
+        <!--company logo-->
+        <img id="company_logo2" style="box-shadow: 7px 7px 5px grey;" height="10%" width="75%" src="./images/mgvcl_logo.jpg">
+        <!--company logo-->
+
+
+
+
+<br><br>
+<a href="https://mpay.guvnl.in/paytm/QuickPay.php?company=mgvcl" class="btn btn-danger" role="button" id="anothertrans">Another Transcation</a>
+
+</div>
+
+<table style="margin-left:auto;margin-right:auto" class="table table-hover table-responsive">
+        <tbody>
+        <tr><td></td><td><label>Consumer Name</label></td><td><input type="text" class="form-control" id="ConsumerName" name="CUSTOMERNAME" size="50" readonly="" style=""></td></tr>
+        <tr style="display:none"><td></td><td><label>Last Paid Bill Details</label></td><td><div id="LastPaid"></div></td></tr>
+
+
+
+				<tr style="display: none;">
+					<th>S.No</th>
+					<th>Label</th>
+					<th>Value</th>
+				</tr>
+
+
+
+
+                                <tr style="display:none;">
+                                        <td>1</td>
+                                        <td><label>company::*</label></td>
+                                        <td><input id="company" tabindex="0" maxlength="20" size="20" name="company" autocomplete="off" readonly="" style="">
+                                        </td>
+                                </tr>
+
+				<tr style="display:none;">
+					<td>1</td>
+					<td><label>ORDER_ID::*</label></td>
+					<td><input id="ORDER_ID" tabindex="0" maxlength="20" size="20" name="ORDER_ID" autocomplete="off" value="1858743" readonly="" style="">
+
+<!--						value="MGVCL79192696">-->
+					</td>
+				</tr>
+				<tr>
+					<td></td>
+					<td><label>CONSUMER NO.*</label></td>
+					<td><input class="form-control" id="CUST_ID" tabindex="9" maxlength="12" size="12" name="CUST_ID" autocomplete="off" placeholder="" readonly="" style=""></td>
+				</tr>
+			
+				<tr> <!-- last paid detail -->
+					<td></td>
+					<td><label>Last Paid Detail</label></td>
+					<td><input class="form-control" id="lastpaid" name="lastpaid" readonly="" style=""></td>
+				</tr>
+				<tr> <!-- bill amount -->
+					<td></td>
+					<td><label>Outstanding Amount(Tentative)</label></td>
+					<td><input class="form-control" id="billamt" tabindex="9" maxlength="12" size="12" name="billamt" autocomplete="off" placeholder="" readonly="" style=""></td>
+				</tr>
+				<tr> <!-- bill date -->
+					<td></td>
+					<td><label>Bill Date</label></td>
+					<td><input class="form-control" id="billdate" tabindex="9" maxlength="12" size="12" name="billdate" autocomplete="off" placeholder="" readonly="" style=""></td>
+				</tr>
+
+<!--addtional parameters-->
+                                <tr style="display:none;">
+                                        <td>3</td>
+                                        <td><label>MERC_UNQ_REF</label></td>
+                                        <td><input id="MERC_UNQ_REF" tabindex="4" name="MERC_UNQ_REF" autocomplete="off" readonly="" style=""></td>
+                                </tr>
+
+<!--addtional parameters-->
+
+				<tr style="display:none;">
+					<td>3</td>
+					<td><label>INDUSTRY_TYPE_ID ::*</label></td>
+					<td><input id="INDUSTRY_TYPE_ID" tabindex="4" maxlength="12" size="12" name="INDUSTRY_TYPE_ID" autocomplete="off" value="GovtUtility" style=""></td>
+				</tr>
+				<tr style="display: none;">
+					<td>4</td>
+					<td><label>Channel ::*</label></td>
+					<td><input id="CHANNEL_ID" tabindex="4" maxlength="12" size="12" name="CHANNEL_ID" autocomplete="off" value="WEB" style="">
+					</td>
+				</tr>
+				<tr>
+					<td></td>
+					<td><label>Amount to Pay*</label></td>
+					<td><input id="payamount" class="form-control" tabindex="10" type="text" name="TXN_AMOUNT" placeholder="Enter Amount" data-toggle="tooltip" data-placement="bottom" title="Only Numbers accepted" autocomplete="off" style="">
+					</td>
+				</tr>
+
+
+
+				<tr>
+					<td></td>
+					<td><label>E-mail (optional)</label></td>
+					<td><input id="EMAIL" class="form-control" name="EMAIL" type="email" autocomplete="off" placeholder="abc@gmail.com" data-toggle="tooltip" data-placement="bottom" title="e-mail address in proper format" style="">
+					</td>
+				</tr>
+
+
+
+				<tr>
+					<td></td>
+					<td><label>Mobile No </label></td>
+					<td><input id="MOBILE_NO" class="form-control" maxlength="10" size="10" name="MOBILE_NO" placeholder="Enter 10 Digit Mobile Number" data-toggle="tooltip" data-placement="bottom" title="Only Numbers accepted" autocomplete="off" style="">
+					</td>
+				</tr>
+
+
+				
+
+
+<!-- Select payment Gateway-->
+				<tr>
+					<td></td>
+					<td><label>Select Payment Gateway *</label></td>
+					<td>
+
+					  
+						    <label class="radio-inline">
+						      <input type="radio" name="optradio" value="billdesk" style="">Bill Desk
+  						    </label>
+						    <!-- <label class="radio-inline">
+						      <input type="radio" name="optradio" value="paytm">PayTm
+  						     </label> -->
+					  
+					</td>
+				</tr>
+
+
+
+
+                                <tr>
+                                        <td></td>
+                                        <td></td>
+                                        <td>
+					<input style="display: none;" id="paytm1" class="btn btn-info" value="Payment via Paytm" type="submit" onclick="">
+					<input style="display: none;" id="billdesk" class="btn btn-success" value="Payment via BillDesk" type="submit" onclick="return billdeskredirect(); ">
+					</td>
+                                </tr>
+
+				
+			</tbody>
+		</table>
+		<label>* - Mandatory Fields</label>
+	
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--modal data-->
+<div id="Searching_Modal" class="modal fade" tabindex="-1" role="dialog" data-keyboard="false" data-backdrop="static">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header" style="text-align: center">
+                    <h3>Searching....</h3>
+                </div>
+                <div class="modal-body">
+<img src="./images/loading.gif" style="display: block;margin-left: auto;margin-right: auto;height:100px">
+                </div>
+                <div class="modal-footer" style="text-align: center"></div>
+            </div>
+        </div>
+    </div>
+</div>
+<!---modal data---->
+
+
+
+
+
+<!-- Modal to show invalid consumer no-->
+<div id="invalidconsumerno" class="modal fade" role="dialog">
+  <div class="modal-dialog">
+
+    <!-- Modal content-->
+    <div class="modal-content">
+      <div class="modal-header">
+        <button type="button" class="close" data-dismiss="modal">×</button>
+        <h4 class="modal-title">Alert</h4>
+      </div>
+      <div class="modal-body">
+        <p id="errmsg">Invalid <font color="red">Consumer No.</font> Please Enter Your Valid Consumer No.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-default" data-dismiss="modal" onclick="document.getElementById('captcha').src = './securimage/securimage_show.php?' + Math.random();  document.getElementById('cap_code').value=''; return false">Close</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Modal to show invalid captcha-->
+<div id="invalidcaptchmodal" class="modal fade" role="dialog">
+  <div class="modal-dialog">
+
+    <!-- Modal content-->
+    <div class="modal-content">
+      <div class="modal-header">
+        <button type="button" class="close" data-dismiss="modal">×</button>
+        <h4 class="modal-title">Alert</h4>
+      </div>
+      <div class="modal-body">
+        <p>Invalid <font color="red">Captcha</font> 
+      </p></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-default" data-dismiss="modal" onclick="document.getElementById('captcha').src = './securimage/securimage_show.php?' + Math.random(); document.getElementById('cap_code').value=''; return false">Close</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+<!-- Modal to show invalid captcha-->
+<div id="secondpaytry" class="modal fade" role="dialog">
+  <div class="modal-dialog">
+
+    <!-- Modal content-->
+    <div class="modal-content">
+      <div class="modal-header">
+        <button type="button" class="close" data-dismiss="modal">×</button>
+        <h4 class="modal-title">Alert</h4>
+      </div>
+      <div class="modal-body">
+	<font color="red">
+        </font><p id="errmsg1"><font color="red">Invalid Captcha</font>
+      </p></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-default" data-dismiss="modal" onclick="document.getElementById('captcha').src = './securimage/securimage_show.php?' + Math.random(); document.getElementById('cap_code').value=''; return false">Close</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+
+
+<div id="myModal" class="modal fade" data-backdrop="static" style="display: none;">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title">Please wait........</h4>
+            </div>
+            <div class="modal-body">
+            <img src="./images/loading.gif" style="display: block;margin-left: auto;margin-right: auto;height:100px">
+	    </div>
+        </div>
+    </div>
+</div>
+
+</form></b></b></div><b><b>
+
+
+<!--
+<div style="position: fixed;bottom: 0;width: 100%;color:blue;width:100%">
+<marquee scrollamount="10"><h4>Incase of issue regarding paytm payment portal please email to us on billmob.guvnl@gebmail.com</h4></marquee>
+</div>-->
+
+
+
+</b></b></body></html>
