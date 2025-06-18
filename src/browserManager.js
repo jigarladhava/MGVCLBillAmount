@@ -81,41 +81,74 @@ class BrowserManager extends EventEmitter {
             console.log(`getAvailableBrowser: No available browsers, adding to queue`);
             // Return promise that resolves when a browser becomes available
             return new Promise((resolve) => {
-                this.browserQueue.push(resolve);
+                const timeoutId = setTimeout(() => {
+                    const queueIndex = this.browserQueue.indexOf(resolve);
+                    if (queueIndex > -1) {
+                        this.browserQueue.splice(queueIndex, 1);
+                        resolve(null); // Resolve with null to indicate timeout
+                    }
+                }, 5 * 60 * 1000); // 5 minute timeout
+
+                this.browserQueue.push((browserId) => {
+                    clearTimeout(timeoutId);
+                    resolve(browserId);
+                });
             });
         }
 
         const browserId = this.availableBrowsers.shift();
+        if (!browserId) return null;
+
         this.busyBrowsers.add(browserId);
         const browserData = this.browsers.get(browserId);
-        browserData.busy = true;
-        console.log(`getAvailableBrowser: Assigned ${browserId} to consumer`);
-        return browserId;
+        if (browserData) {
+            browserData.busy = true;
+            console.log(`getAvailableBrowser: Assigned ${browserId} to consumer`);
+            return browserId;
+        }
+        return null;
     }
 
-    releaseBrowser(browserId) {
+    async releaseBrowser(browserId) {
         const browserData = this.browsers.get(browserId);
         if (!browserData) return;
 
         console.log(`[${browserId}] Releasing browser, current state: busy=${browserData.busy}, consumer=${browserData.currentConsumer}`);
 
-        // Clear browser state
-        browserData.busy = false;
-        browserData.currentConsumer = null;
-        browserData.captchaRequired = false;
-        this.busyBrowsers.delete(browserId);
-        this.captchaLocks.delete(browserId);
+        try {
+            // Reset the browser page
+            await browserData.page.goto('https://mpay.guvnl.in/paytm/QuickPay.php', {
+                waitUntil: 'networkidle',
+                timeout: 30000
+            });
+            
+            // Clear browser state
+            browserData.busy = false;
+            browserData.currentConsumer = null;
+            browserData.captchaRequired = false;
+            this.busyBrowsers.delete(browserId);
+            this.captchaLocks.delete(browserId);
 
-        // If there are pending requests, assign this browser to the next one
-        if (this.browserQueue.length > 0) {
-            const nextRequest = this.browserQueue.shift();
-            browserData.busy = true;
-            this.busyBrowsers.add(browserId);
-            console.log(`[${browserId}] Assigned to pending request, queue length: ${this.browserQueue.length}`);
-            nextRequest(browserId);
-        } else {
+            // Emit event that browser is now available for next consumer
+            this.emit('browser-available', browserId);
+
+            // If there are pending requests in queue, process next consumer immediately
+            if (this.browserQueue.length > 0) {
+                const nextRequest = this.browserQueue.shift();
+                browserData.busy = true;
+                this.busyBrowsers.add(browserId);
+                console.log(`[${browserId}] Processing next consumer from queue, queue length: ${this.browserQueue.length}`);
+                nextRequest(browserId);
+            } else {
+                this.availableBrowsers.push(browserId);
+                console.log(`[${browserId}] Made available for next consumer, available browsers: ${this.availableBrowsers.length}`);
+            }
+        } catch (error) {
+            console.error(`[${browserId}] Error resetting browser:`, error);
+            // Still release the browser even if reset fails
+            browserData.busy = false;
+            this.busyBrowsers.delete(browserId);
             this.availableBrowsers.push(browserId);
-            console.log(`[${browserId}] Made available for next consumer, available browsers: ${this.availableBrowsers.length}`);
         }
     }
 
@@ -465,99 +498,39 @@ class BrowserManager extends EventEmitter {
         try {
             console.log(`[${page.browserId || 'unknown'}] Starting data extraction...`);
             
-            // Wait for the billing details to be visible and populated
-            await page.waitForSelector('#detailconsnumber', { timeout: 15000 });
-            await page.waitForSelector('#ConsumerName', { timeout: 10000 });
-            await page.waitForTimeout(2000); // Extra wait for data to populate
-
-            // Extract data based on the actual HTML structure
-            const data = await page.evaluate(() => {
-                const result = {
-                    consumerName: '',
-                    consumerNo: '',
-                    lastPaidDetail: '',
-                    outstandingAmount: '',
-                    billDate: '',
-                    amountToPay: ''
-                };
-
-                // Extract data using direct ID selectors from the HTML structure
-                const consumerNameEl = document.getElementById('ConsumerName');
-                const custIdEl = document.getElementById('CUST_ID');
-                const lastPaidEl = document.getElementById('lastpaid');
-                const billAmtEl = document.getElementById('billamt');
-                const billDateEl = document.getElementById('billdate');
-                const payAmountEl = document.getElementById('payamount');
-
-                // Map the values to result object
-                if (consumerNameEl && consumerNameEl.value) {
-                    result.consumerName = consumerNameEl.value.trim();
-                }
-                
-                if (custIdEl && custIdEl.value) {
-                    result.consumerNo = custIdEl.value.trim();
-                }
-                
-                if (lastPaidEl && lastPaidEl.value) {
-                    result.lastPaidDetail = lastPaidEl.value.trim();
-                }
-                
-                if (billAmtEl && billAmtEl.value) {
-                    result.outstandingAmount = billAmtEl.value.trim();
-                }
-                
-                if (billDateEl && billDateEl.value) {
-                    result.billDate = billDateEl.value.trim();
-                }
-                
-                if (payAmountEl && payAmountEl.value) {
-                    result.amountToPay = payAmountEl.value.trim();
-                }
-
-                // Also try to extract from table structure as fallback
-                const table = document.querySelector('table.table-hover');
-                if (table) {
-                    const rows = Array.from(table.querySelectorAll('tr'));
-                    rows.forEach(row => {
-                        const cells = row.querySelectorAll('td');
-                        if (cells.length >= 3) {
-                            const label = cells[1]?.innerText?.trim();
-                            const input = cells[2]?.querySelector('input');
-                            const value = input ? input.value?.trim() : cells[2]?.innerText?.trim();
-                            
-                            // Map labels to result keys
-                            if (label === 'Consumer Name' && value && !result.consumerName) {
-                                result.consumerName = value;
-                            } else if (label === 'CONSUMER NO.*' && value && !result.consumerNo) {
-                                result.consumerNo = value;
-                            } else if (label === 'Last Paid Detail' && value && !result.lastPaidDetail) {
-                                result.lastPaidDetail = value;
-                            } else if (label === 'Outstanding Amount(Tentative)' && value && !result.outstandingAmount) {
-                                result.outstandingAmount = value;
-                            } else if (label === 'Bill Date' && value && !result.billDate) {
-                                result.billDate = value;
-                            } else if (label === 'Amount to Pay*' && value && !result.amountToPay) {
-                                result.amountToPay = value;
-                            }
-                        }
-                    });
-                }
-
-                // Validate extraction - require at least consumer name and number
-                const hasData = result.consumerName && result.consumerNo;
-                if (!hasData) {
-                    console.error('Extraction failed - missing required data:', result);
-                    throw new Error('Failed to extract billing data - missing consumer name or number');
-                }
-
-                console.log('Data extraction successful:', result);
-                return result;
+            // Wait for all required elements to be present and visible
+            await Promise.all([
+                page.waitForSelector('#detailconsnumber', { visible: true, timeout: 15000 }),
+                page.waitForSelector('#ConsumerName', { visible: true, timeout: 10000 }),
+                page.waitForSelector('#CUST_ID', { visible: true, timeout: 10000 }),
+                page.waitForSelector('#lastpaid', { visible: true, timeout: 10000 }),
+                page.waitForSelector('#billamt', { visible: true, timeout: 10000 }),
+                page.waitForSelector('#billdate', { visible: true, timeout: 10000 })
+            ]).catch(() => {
+                throw new Error('Timeout waiting for bill details elements');
             });
 
-            // Add completion tracking
-            this.completedExtractions = (this.completedExtractions || 0) + 1;
-            if (this.completedExtractions === this.totalConsumers) {
-                this.emit('extraction-complete');
+            // Extra wait to ensure data is populated
+            await page.waitForTimeout(2000);
+
+            // Extract data using direct element evaluation
+            const data = await page.evaluate(() => {
+                const getValue = (id) => document.getElementById(id)?.value?.trim() || '';
+                
+                return {
+                    consumerName: getValue('ConsumerName'),
+                    consumerNo: getValue('CUST_ID'),
+                    lastPaidDetail: getValue('lastpaid'),
+                    outstandingAmount: getValue('billamt'),
+                    billDate: getValue('billdate'),
+                    amountToPay: getValue('payamount'),
+                    location: getValue('MERC_UNQ_REF')
+                };
+            });
+
+            // Validate extracted data
+            if (!data.consumerName || !data.consumerNo) {
+                throw new Error('Required billing data missing');
             }
 
             console.log(`[${page.browserId || 'unknown'}] Data extraction completed:`, data);
@@ -565,33 +538,6 @@ class BrowserManager extends EventEmitter {
 
         } catch (error) {
             console.error(`[${page.browserId || 'unknown'}] Data extraction error:`, error);
-            
-            // Try to get page state for debugging
-            try {
-                const debugInfo = await page.evaluate(() => {
-                    return {
-                        detailConsNumberExists: !!document.getElementById('detailconsnumber'),
-                        consumerNameExists: !!document.getElementById('ConsumerName'),
-                        consumerNameValue: document.getElementById('ConsumerName')?.value,
-                        custIdExists: !!document.getElementById('CUST_ID'),
-                        custIdValue: document.getElementById('CUST_ID')?.value,
-                        lastPaidExists: !!document.getElementById('lastpaid'),
-                        lastPaidValue: document.getElementById('lastpaid')?.value,
-                        billAmtExists: !!document.getElementById('billamt'),
-                        billAmtValue: document.getElementById('billamt')?.value,
-                        billDateExists: !!document.getElementById('billdate'),
-                        billDateValue: document.getElementById('billdate')?.value,
-                        payAmountExists: !!document.getElementById('payamount'),
-                        payAmountValue: document.getElementById('payamount')?.value,
-                        pageTitle: document.title,
-                        bodyText: document.body.innerText.substring(0, 300)
-                    };
-                });
-                console.error('Debug info:', debugInfo);
-            } catch (debugError) {
-                console.error('Could not get debug info:', debugError);
-            }
-            
             throw error;
         }
     }
