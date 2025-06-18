@@ -4,6 +4,7 @@ class MGVCLApp {
         this.currentSessionId = null;
         this.captchaQueue = [];
         this.browserStatus = new Map();
+        this.captchaTimeouts = new Map();
         
         this.initializeElements();
         this.setupEventListeners();
@@ -35,7 +36,7 @@ class MGVCLApp {
         
         // Captcha elements
         this.captchaImage = document.getElementById('captchaImage');
-        this.captchaConsumer = document.getElementById('captchaConsumer');
+        this.captchaConsumer = document.getElementById('captchaBrowser');
         this.captchaBrowser = document.getElementById('captchaBrowser');
         this.queueCount = document.getElementById('queueCount');
         
@@ -88,6 +89,11 @@ class MGVCLApp {
             e.preventDefault();
             this.downloadTemplate();
         });
+
+        // Reload captcha button
+        document.getElementById('reloadCaptchaBtn').addEventListener('click', () => {
+            this.handleReloadCaptcha();
+        });
     }
 
     setupSocketListeners() {
@@ -117,6 +123,10 @@ class MGVCLApp {
         
         this.socket.on('processing-error', (data) => {
             this.handleProcessingError(data);
+        });
+        
+        this.socket.on('extraction-complete', (data) => {
+            this.handleExtractionComplete(data);
         });
     }
 
@@ -200,7 +210,7 @@ class MGVCLApp {
         }
     }
 
-    handleCaptchaSubmit() {
+    async handleCaptchaSubmit() {
         const captchaText = this.captchaInput.value.trim();
         if (!captchaText) {
             this.addLogEntry('error', 'Please enter the captcha text');
@@ -208,16 +218,24 @@ class MGVCLApp {
         }
 
         const currentCaptcha = this.captchaQueue[0];
-        if (currentCaptcha) {
-            this.socket.emit('captcha-response', {
-                sessionId: this.currentSessionId,
-                captcha: captchaText,
-                browserId: currentCaptcha.browserId
-            });
+        if (!currentCaptcha) return;
 
-            this.addLogEntry('success', `Captcha submitted for ${currentCaptcha.consumerNo}`);
-            this.captchaInput.value = '';
-        }
+        // Lock the submit button and input
+        this.captchaInput.disabled = true;
+        this.captchaForm.querySelector('button[type="submit"]').disabled = true;
+
+        const browserId = currentCaptcha.browserId;
+        this.addLogEntry('info', `Submitting captcha for browser ${browserId}...`);
+
+        this.socket.emit('captcha-response', {
+            sessionId: this.currentSessionId,
+            captcha: captchaText,
+            browserId: browserId,
+            consumerNo: currentCaptcha.consumerNo
+        });
+
+        // Clear the input for next captcha
+        this.captchaInput.value = '';
     }
 
     updateProcessingStatus(data) {
@@ -229,61 +247,125 @@ class MGVCLApp {
         // Update browser status
         this.updateBrowserStatus(data.browserId, 'busy');
 
-        this.addLogEntry('info', `Processing consumer: ${data.consumerNo} on ${data.browserId}`);
+        this.addLogEntry('info', `Processing consumer: ${data.consumerNo}`, data.browserId);
     }
 
     handleCaptchaRequired(data) {
         if (data.sessionId !== this.currentSessionId) return;
 
-        // Add to captcha queue
-        this.captchaQueue.push(data);
-        this.updateCaptchaDisplay();
+        this.addLogEntry('info', `Received captcha request for browser ${data.browserId}`);
 
-        this.addLogEntry('warning', `Captcha required for consumer: ${data.consumerNo}`);
+        // Clear any existing timeout for this browser
+        if (this.captchaTimeouts.has(data.browserId)) {
+            clearTimeout(this.captchaTimeouts.get(data.browserId));
+        }
+
+        // Set new timeout
+        const timeout = setTimeout(() => {
+            this.removeCaptchaFromQueue(data.browserId);
+            this.addLogEntry('error', `Captcha timeout for browser ${data.browserId}`);
+        }, 5 * 60 * 1000); // 5 minutes timeout
+
+        this.captchaTimeouts.set(data.browserId, timeout);
+
+        // Update or add to queue
+        const existingIndex = this.captchaQueue.findIndex(item => item.browserId === data.browserId);
+        if (existingIndex >= 0) {
+            this.captchaQueue[existingIndex] = data;
+            this.addLogEntry('info', `Updated captcha for browser ${data.browserId}`);
+        } else {
+            this.captchaQueue.push(data);
+            this.addLogEntry('info', `Added new captcha for browser ${data.browserId}`);
+        }
+
+        this.showCaptchaSection();
+        this.updateCaptchaDisplay();
+    }
+
+    handleCaptchaSubmitted(data) {
+        if (data.success) {
+            this.removeCaptchaFromQueue(data.browserId);
+            this.addLogEntry('success', 'Captcha submitted successfully', data.browserId);
+
+            // Re-enable input for next captcha
+            this.captchaInput.disabled = false;
+            this.captchaForm.querySelector('button[type="submit"]').disabled = false;
+
+            // Load next captcha if available
+            if (this.captchaQueue.length > 0) {
+                this.updateCaptchaDisplay();
+                // Focus on input field for next captcha
+                this.captchaInput.focus();
+            } else {
+                this.hideCaptchaSection();
+            }
+        }
     }
 
     updateCaptchaDisplay() {
-        this.queueCount.textContent = this.captchaQueue.length;
-
-        if (this.captchaQueue.length > 0) {
-            const currentCaptcha = this.captchaQueue[0];
-            
+        const currentCaptcha = this.captchaQueue[0];
+        if (currentCaptcha) {
+            this.captchaSection.style.display = 'block';
             this.captchaConsumer.textContent = currentCaptcha.consumerNo;
             this.captchaBrowser.textContent = currentCaptcha.browserId;
             this.captchaImage.src = currentCaptcha.captchaImage;
             this.captchaImage.style.display = 'block';
+            this.queueCount.textContent = this.captchaQueue.length.toString();
             
-            this.showCaptchaSection();
-            this.captchaInput.focus();
+            // Enable input fields
+            this.captchaInput.disabled = false;
+            this.captchaForm.querySelector('button[type="submit"]').disabled = false;
         } else {
             this.hideCaptchaSection();
         }
     }
 
-    handleCaptchaSubmitted(data) {
-        if (data.success) {
-            // Remove processed captcha from queue
-            this.captchaQueue.shift();
+    removeCaptchaFromQueue(browserId) {
+        const index = this.captchaQueue.findIndex(item => item.browserId === browserId);
+        if (index >= 0) {
+            this.captchaQueue.splice(index, 1);
             this.updateCaptchaDisplay();
-            
-            this.addLogEntry('success', 'Captcha submitted successfully');
+        }
+
+        // Clear timeout
+        if (this.captchaTimeouts.has(browserId)) {
+            clearTimeout(this.captchaTimeouts.get(browserId));
+            this.captchaTimeouts.delete(browserId);
         }
     }
 
     handleCaptchaError(data) {
-        this.addLogEntry('error', `Captcha error: ${data.error}`);
+        // Re-enable input
+        this.captchaInput.disabled = false;
+        this.captchaForm.querySelector('button[type="submit"]').disabled = false;
+        
+        // Clear the input
+        this.captchaInput.value = '';
+        
+        // Show error
+        this.addLogEntry('error', `Captcha error: ${data.error}`, data.browserId);
+        
+        // Request new captcha image
+        const currentCaptcha = this.captchaQueue[0];
+        if (currentCaptcha) {
+            this.socket.emit('reload-captcha', {
+                sessionId: this.currentSessionId,
+                browserId: currentCaptcha.browserId,
+                consumerNo: currentCaptcha.consumerNo
+            });
+        }
     }
 
     handleConsumerProcessed(data) {
         if (data.sessionId !== this.currentSessionId) return;
-
-        // Release browser
-        this.updateBrowserStatus(data.result.browserId || 'unknown', 'available');
+        
+        const browserId = data.result.browserId || 'unknown';
+        this.updateBrowserStatus(browserId, 'available');
 
         if (data.result.error) {
-            this.addLogEntry('error', `Failed to process ${data.consumerNo}: ${data.result.error}`);
+            this.addLogEntry('error', `Failed to process ${data.consumerNo}: ${data.result.error}`, browserId);
         } else {
-            this.addLogEntry('success', `Successfully processed ${data.consumerNo}`);
+            this.addLogEntry('success', `Successfully processed ${data.consumerNo}`, browserId);
         }
     }
 
@@ -293,6 +375,23 @@ class MGVCLApp {
         this.addLogEntry('success', 'All consumers processed successfully!');
         this.showResultsSection();
         this.loadResultsSummary();
+    }
+
+    handleExtractionComplete(data) {
+        if (data.sessionId !== this.currentSessionId) return;
+        
+        // Enable download button
+        this.downloadResults.disabled = false;
+        this.downloadResults.style.display = 'block';
+        
+        // Update UI
+        this.addLogEntry('success', 'All data extracted successfully! Ready for download.');
+        this.showResultsSection();
+        
+        // Auto-trigger download if configured
+        if (data.autoDownload) {
+            this.handleDownloadResults();
+        }
     }
 
     handleProcessingError(data) {
@@ -328,9 +427,26 @@ class MGVCLApp {
         }
     }
 
-    handleDownloadResults() {
-        if (this.currentSessionId) {
-            window.location.href = `/download/${this.currentSessionId}`;
+    async handleDownloadResults() {
+        try {
+            const response = await fetch(`/download/${this.currentSessionId}`);
+            if (response.ok) {
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `MGVCL_Results_${this.currentSessionId}.xlsx`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                a.remove();
+                
+                this.addLogEntry('success', 'Results downloaded successfully');
+            } else {
+                throw new Error('Download failed');
+            }
+        } catch (error) {
+            this.addLogEntry('error', `Download error: ${error.message}`);
         }
     }
 
@@ -380,13 +496,14 @@ class MGVCLApp {
         this.addLogEntry('info', 'Application reset. Ready for new file upload.');
     }
 
-    addLogEntry(type, message) {
+    addLogEntry(type, message, browserId = '') {
         const logEntry = document.createElement('div');
         logEntry.className = `log-entry ${type}`;
         
         const timestamp = new Date().toLocaleTimeString();
+        const browserInfo = browserId ? ` [${browserId}]` : '';
         logEntry.innerHTML = `
-            <span class="log-time">[${timestamp}]</span>
+            <span class="log-time">[${timestamp}]${browserInfo}</span>
             <span class="log-message">${message}</span>
         `;
         
@@ -400,6 +517,19 @@ class MGVCLApp {
         const sizes = ['Bytes', 'KB', 'MB', 'GB'];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    handleReloadCaptcha() {
+        // Get the current captcha info
+        const currentCaptcha = this.captchaQueue[0];
+        if (!currentCaptcha) return;
+        // Emit reload-captcha event to backend
+        this.socket.emit('reload-captcha', {
+            sessionId: this.currentSessionId,
+            browserId: currentCaptcha.browserId,
+            consumerNo: currentCaptcha.consumerNo
+        });
+        this.addLogEntry('info', 'Requested captcha reload...', currentCaptcha.browserId);
     }
 }
 

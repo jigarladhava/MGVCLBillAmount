@@ -25,7 +25,7 @@ function askQuestion(question) {
 async function interactiveTest() {
     console.log('🚀 === MGVCL Interactive Test with Real Captcha Input ===\n');
     
-    const browserManager = new BrowserManager(1);
+    const browserManager = new BrowserManager(5); // Use 5 concurrent browsers to match server.js
     
     try {
         console.log('📋 Initializing browser...');

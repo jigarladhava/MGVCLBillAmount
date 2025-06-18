@@ -11,7 +11,7 @@ const sampleConsumers = [
 ];
 
 async function testBrowser() {
-    const browserManager = new BrowserManager(1);
+    const browserManager = new BrowserManager(5); // Use 5 concurrent browsers to match server.js
 
     try {
         console.log('=== MGVCL Browser Automation Test ===');

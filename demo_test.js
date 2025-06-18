@@ -11,14 +11,14 @@ const sampleConsumers = [
 async function demonstrateSystem() {
     console.log('🚀 === MGVCL Bill Amount Extractor - Full System Demo ===\n');
     
-    const browserManager = new BrowserManager(2); // Use 2 browsers for demo
+    const browserManager = new BrowserManager(5); // Use 5 concurrent browsers to match server.js
     const excelProcessor = new ExcelProcessor();
     
     try {
         // Step 1: Initialize browsers
         console.log('📋 Step 1: Initializing browser instances...');
         await browserManager.initialize();
-        console.log('✅ 2 browser instances initialized successfully\n');
+        console.log('✅ 5 browser instances initialized successfully\n');
         
         // Step 2: Create sample Excel file
         console.log('📋 Step 2: Creating sample Excel file...');

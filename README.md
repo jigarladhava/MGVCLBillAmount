@@ -4,7 +4,7 @@ A Node.js application with web interface for extracting billing data from MGVCL 
 
 ## Features
 
-- **Multi-browser Support**: Handles up to 5 concurrent Playwright browser instances
+- **Multi-browser Support**: Handles up to 5 concurrent Playwright browser instances (all scripts and server use 5 browsers for consistency)
 - **Real-time Captcha Handling**: User can continuously enter captchas as required
 - **Excel File Processing**: Upload Excel files with consumer numbers and download results
 - **Web Interface**: Modern, responsive web UI for easy operation

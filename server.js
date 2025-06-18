@@ -53,26 +53,70 @@ const excelProcessor = new ExcelProcessor();
 
 // Store active sessions
 const activeSessions = new Map();
+// Add a set to track consumers being processed globally (across all sessions)
+const consumersInProgress = new Set();
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
     
     socket.on('captcha-response', async (data) => {
-        const { sessionId, captcha, browserId } = data;
+        const { sessionId, captcha, browserId, consumerNo } = data;
         const session = activeSessions.get(sessionId);
         
-        if (session && session.waitingForCaptcha) {
-            session.captchaResponse = captcha;
-            session.waitingForCaptcha = false;
-            
-            // Continue processing with the captcha
-            try {
-                await browserManager.submitCaptcha(browserId, captcha);
-                socket.emit('captcha-submitted', { success: true });
-            } catch (error) {
-                socket.emit('captcha-error', { error: error.message });
+        if (!session || !session.waitingForCaptcha) return;
+        
+        try {
+            // Verify this browser is actually waiting for captcha
+            const browserData = browserManager.browsers.get(browserId);
+            if (!browserData || !browserData.captchaRequired || browserData.currentConsumer !== consumerNo) {
+                throw new Error('Invalid browser state or consumer mismatch');
             }
+
+            await browserManager.submitCaptcha(browserId, captcha);
+            
+            socket.emit('captcha-submitted', { 
+                success: true, 
+                browserId,
+                consumerNo 
+            });
+            
+            // Continue processing this consumer
+            const billingData = await browserManager.submitAndGetResults(browserId);
+            if (billingData) {
+                session.results.push({
+                    consumerNo,
+                    ...billingData
+                });
+            }
+            
+        } catch (error) {
+            socket.emit('captcha-error', { 
+                error: error.message,
+                browserId,
+                consumerNo
+            });
+        } finally {
+            // Always release the browser
+            browserManager.releaseBrowser(browserId);
+        }
+    });
+    
+    socket.on('reload-captcha', async (data) => {
+        const { sessionId, browserId, consumerNo } = data;
+        try {
+            await browserManager.refreshCaptcha(browserId);
+            const captchaImage = await browserManager.getCaptchaImage(browserId);
+            
+            io.emit('captcha-required', {
+                sessionId,
+                browserId,
+                captchaImage,
+                consumerNo
+            });
+            
+        } catch (error) {
+            socket.emit('captcha-error', { error: error.message });
         }
     });
     
@@ -140,17 +184,20 @@ app.get('/status/:sessionId', (req, res) => {
 // Download results
 app.get('/download/:sessionId', async (req, res) => {
     try {
-        const session = activeSessions.get(req.params.sessionId);
-        if (!session) {
-            return res.status(404).json({ error: 'Session not found' });
+        const { sessionId } = req.params;
+        const excelProcessor = new ExcelProcessor();
+        
+        // Get results path for the session
+        const resultsPath = path.join(excelProcessor.resultsDir, `MGVCL_Results_${sessionId}.xlsx`);
+        
+        if (!fs.existsSync(resultsPath)) {
+            return res.status(404).json({ error: 'Results file not found' });
         }
-
-        const outputPath = await excelProcessor.writeResults(session.results, req.params.sessionId);
-        res.download(outputPath);
-
+        
+        res.download(resultsPath);
     } catch (error) {
         console.error('Download error:', error);
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: 'Failed to download results' });
     }
 });
 
@@ -169,50 +216,54 @@ app.get('/template', async (req, res) => {
 async function processConsumerNumbers(sessionId) {
     const session = activeSessions.get(sessionId);
     if (!session) return;
-    
+
     try {
+        // Initialize browsers only once
+        await browserManager.initialize();
+
+        const queue = session.consumerNumbers.slice(session.currentIndex);
+        const completedResults = new Map();
+        let currentQueueIndex = 0;
+
+        // Limit concurrent processing to maxBrowsers
+        const concurrentProcessing = Math.min(browserManager.maxBrowsers, queue.length);
+        const processingPromises = Array(concurrentProcessing).fill(null).map(async () => {
+            while (true) {
+                const index = currentQueueIndex++;
+                if (index >= queue.length) break;
+
+                const consumerNo = queue[index];
+                if (consumersInProgress.has(consumerNo)) {
+                    continue;
+                }
+
+                try {
+                    consumersInProgress.add(consumerNo);
+                    const result = await processConsumer(consumerNo, null, sessionId);
+                    completedResults.set(index, result);
+                } catch (error) {
+                    console.error(`Error processing consumer ${consumerNo}:`, error);
+                    completedResults.set(index, { consumerNo, error: error.message });
+                } finally {
+                    consumersInProgress.delete(consumerNo);
+                }
+            }
+        });
+
+        await Promise.all(processingPromises);
+
+        // Add results to session in correct order
         for (let i = session.currentIndex; i < session.consumerNumbers.length; i++) {
-            const consumerNo = session.consumerNumbers[i];
-            session.currentIndex = i;
-            
-            // Get available browser
-            const browserId = await browserManager.getAvailableBrowser();
-            
-            // Emit status update
-            io.emit('processing-update', {
-                sessionId,
-                currentIndex: i,
-                consumerNo,
-                browserId
-            });
-            
-            try {
-                // Process this consumer number
-                const result = await processConsumer(consumerNo, browserId, sessionId);
+            const result = completedResults.get(i);
+            if (result) {
                 session.results.push(result);
-                
-                // Emit result
-                io.emit('consumer-processed', {
-                    sessionId,
-                    consumerNo,
-                    result
-                });
-                
-            } catch (error) {
-                console.error(`Error processing consumer ${consumerNo}:`, error);
-                session.results.push({
-                    consumerNo,
-                    error: error.message
-                });
-            } finally {
-                // Release browser
-                browserManager.releaseBrowser(browserId);
             }
         }
-        
+
+        session.currentIndex = session.consumerNumbers.length;
         session.status = 'completed';
         io.emit('processing-complete', { sessionId });
-        
+
     } catch (error) {
         console.error('Processing error:', error);
         session.status = 'error';
@@ -220,72 +271,82 @@ async function processConsumerNumbers(sessionId) {
     }
 }
 
-// Process individual consumer
-async function processConsumer(consumerNo, browserId, sessionId) {
-    try {
-        // Format consumer number (pad with zeros if less than 11 digits)
-        const formattedConsumerNo = consumerNo.toString().padStart(11, '0');
+// Update processConsumer function
+async function processConsumer(consumerNo, _, sessionId) {
+    let browserId;
+    let retries = 0;
+    const maxRetries = 3;
+    
+    while (retries < maxRetries) {
+        try {
+            browserId = await browserManager.getAvailableBrowser();
+            const formattedConsumerNo = consumerNo.toString().padStart(11, '0');
 
-        console.log(`Processing consumer ${formattedConsumerNo} on ${browserId}`);
+            console.log(`Processing consumer ${formattedConsumerNo} on ${browserId}`);
+            io.emit('processing-update', { sessionId, browserId, consumerNo: formattedConsumerNo });
 
-        // Navigate and fill form
-        await browserManager.navigateToMGVCL(browserId);
-        await browserManager.selectCompany(browserId, 'MGVCL');
-        await browserManager.enterConsumerNumber(browserId, formattedConsumerNo);
+            await browserManager.navigateToMGVCL(browserId);
+            await browserManager.selectCompany(browserId, 'MGVCL');
+            await browserManager.enterConsumerNumber(browserId, formattedConsumerNo);
 
-        // Check if captcha is required
-        const captchaRequired = await browserManager.isCaptchaRequired(browserId);
-        console.log(`Captcha required for ${formattedConsumerNo}: ${captchaRequired}`);
+            const captchaRequired = await browserManager.isCaptchaRequired(browserId);
+            console.log(`Captcha required for ${formattedConsumerNo}: ${captchaRequired}`);
 
-        if (captchaRequired) {
-            // Get captcha image and request user input
-            const captchaImage = await browserManager.getCaptchaImage(browserId);
+            if (captchaRequired) {
+                const session = activeSessions.get(sessionId);
+                if (!session) throw new Error('Session not found');
 
-            // Set session to wait for captcha
-            const session = activeSessions.get(sessionId);
-            if (!session) {
-                throw new Error('Session not found');
+                browserManager.lockForCaptcha(browserId, formattedConsumerNo);
+                const captchaImage = await browserManager.getCaptchaImage(browserId);
+
+                session.waitingForCaptcha = true;
+                session.currentBrowserId = browserId;
+
+                io.emit('captcha-required', {
+                    sessionId,
+                    browserId,
+                    captchaImage,
+                    consumerNo: formattedConsumerNo
+                });
+
+                // Wait for captcha with timeout
+                const captchaTimeout = 5 * 60 * 1000; // 5 minutes
+                const startTime = Date.now();
+                
+                while (session.waitingForCaptcha) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    if (Date.now() - startTime >= captchaTimeout) {
+                        throw new Error('Captcha timeout');
+                    }
+                }
             }
 
-            session.waitingForCaptcha = true;
+            const billingData = await browserManager.submitAndGetResults(browserId);
+            return {
+                consumerNo: formattedConsumerNo,
+                ...billingData,
+                browserId
+            };
 
-            // Emit captcha request
-            io.emit('captcha-required', {
-                sessionId,
-                browserId,
-                captchaImage,
-                consumerNo: formattedConsumerNo
-            });
-
-            // Wait for captcha response with timeout
-            let waitTime = 0;
-            const maxWaitTime = 300000; // 5 minutes timeout
-
-            while (session.waitingForCaptcha && waitTime < maxWaitTime) {
-                await new Promise(resolve => setTimeout(resolve, 1000));
-                waitTime += 1000;
+        } catch (error) {
+            retries++;
+            console.error(`Error processing consumer ${consumerNo} (attempt ${retries}):`, error);
+            
+            if (retries >= maxRetries) {
+                throw error;
             }
-
-            if (waitTime >= maxWaitTime) {
-                throw new Error('Captcha timeout - no response received within 5 minutes');
+            
+            // Wait before retry
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            
+        } finally {
+            if (browserId) {
+                browserManager.releaseBrowser(browserId);
             }
         }
-
-        // Submit form and get results
-        const billingData = await browserManager.submitAndGetResults(browserId);
-
-        console.log(`Successfully processed consumer ${formattedConsumerNo}`);
-
-        return {
-            consumerNo: formattedConsumerNo,
-            ...billingData
-        };
-
-    } catch (error) {
-        console.error(`Error processing consumer ${consumerNo}:`, error);
-        throw error;
     }
 }
+
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
@@ -299,3 +360,4 @@ process.on('SIGINT', async () => {
     await browserManager.closeAll();
     process.exit(0);
 });
+
