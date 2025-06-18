@@ -74,8 +74,11 @@ class BrowserManager extends EventEmitter {
             await this.initialize();
         }
 
+        console.log(`getAvailableBrowser: Available browsers: ${this.availableBrowsers.length}, Busy browsers: ${this.busyBrowsers.size}, Queue length: ${this.browserQueue.length}`);
+
         // Check if there's an available browser
         if (this.availableBrowsers.length === 0) {
+            console.log(`getAvailableBrowser: No available browsers, adding to queue`);
             // Return promise that resolves when a browser becomes available
             return new Promise((resolve) => {
                 this.browserQueue.push(resolve);
@@ -86,12 +89,15 @@ class BrowserManager extends EventEmitter {
         this.busyBrowsers.add(browserId);
         const browserData = this.browsers.get(browserId);
         browserData.busy = true;
+        console.log(`getAvailableBrowser: Assigned ${browserId} to consumer`);
         return browserId;
     }
 
     releaseBrowser(browserId) {
         const browserData = this.browsers.get(browserId);
         if (!browserData) return;
+
+        console.log(`[${browserId}] Releasing browser, current state: busy=${browserData.busy}, consumer=${browserData.currentConsumer}`);
 
         // Clear browser state
         browserData.busy = false;
@@ -105,9 +111,11 @@ class BrowserManager extends EventEmitter {
             const nextRequest = this.browserQueue.shift();
             browserData.busy = true;
             this.busyBrowsers.add(browserId);
+            console.log(`[${browserId}] Assigned to pending request, queue length: ${this.browserQueue.length}`);
             nextRequest(browserId);
         } else {
             this.availableBrowsers.push(browserId);
+            console.log(`[${browserId}] Made available for next consumer, available browsers: ${this.availableBrowsers.length}`);
         }
     }
 

@@ -8,6 +8,10 @@ const cors = require('cors');
 const BrowserManager = require('./src/browserManager');
 const ExcelProcessor = require('./src/excelProcessor');
 
+// Ensure results directory exists
+const resultsDir = './results';
+fs.ensureDirSync(resultsDir);
+
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
@@ -225,32 +229,64 @@ async function processConsumerNumbers(sessionId) {
         const completedResults = new Map();
         let currentQueueIndex = 0;
 
-        // Limit concurrent processing to maxBrowsers
-        const concurrentProcessing = Math.min(browserManager.maxBrowsers, queue.length);
-        const processingPromises = Array(concurrentProcessing).fill(null).map(async () => {
+        console.log(`Starting processing for session ${sessionId} with ${queue.length} consumers`);
+        console.log(`Consumer queue: [${queue.join(', ')}]`);
+
+        // Create worker functions that will continuously process consumers
+        const workers = Array(browserManager.maxBrowsers).fill(null).map(async (_, workerIndex) => {
+            console.log(`Worker ${workerIndex} started`);
+            
             while (true) {
+                // Get next consumer from queue atomically
                 const index = currentQueueIndex++;
-                if (index >= queue.length) break;
+                console.log(`Worker ${workerIndex}: Queue index ${index}, queue length ${queue.length}, currentQueueIndex ${currentQueueIndex}`);
+                
+                if (index >= queue.length) {
+                    console.log(`Worker ${workerIndex} finished - no more consumers (index ${index} >= ${queue.length})`);
+                    break;
+                }
 
                 const consumerNo = queue[index];
                 if (consumersInProgress.has(consumerNo)) {
+                    console.log(`Worker ${workerIndex}: Consumer ${consumerNo} already in progress, skipping`);
                     continue;
                 }
 
+                console.log(`Worker ${workerIndex}: Processing consumer ${consumerNo} (index ${index}/${queue.length})`);
+                
                 try {
                     consumersInProgress.add(consumerNo);
+                    console.log(`Worker ${workerIndex}: Starting processConsumer for consumer ${consumerNo}`);
                     const result = await processConsumer(consumerNo, null, sessionId);
+                    console.log(`Worker ${workerIndex}: processConsumer completed for consumer ${consumerNo}`);
                     completedResults.set(index, result);
+                    console.log(`Worker ${workerIndex}: Completed consumer ${consumerNo}, moving to next...`);
                 } catch (error) {
-                    console.error(`Error processing consumer ${consumerNo}:`, error);
+                    console.error(`Worker ${workerIndex}: Error processing consumer ${consumerNo}:`, error);
                     completedResults.set(index, { consumerNo, error: error.message });
+                    console.log(`Worker ${workerIndex}: Error recorded for consumer ${consumerNo}, moving to next...`);
                 } finally {
                     consumersInProgress.delete(consumerNo);
+                    console.log(`Worker ${workerIndex}: Removed consumer ${consumerNo} from in-progress set`);
                 }
+                
+                // Add a small delay to prevent overwhelming the system
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                // Log the loop condition check
+                console.log(`Worker ${workerIndex}: Loop condition check - currentQueueIndex: ${currentQueueIndex}, queue.length: ${queue.length}, continue: ${currentQueueIndex < queue.length}`);
+                
+                // Log that we're continuing to next iteration
+                console.log(`Worker ${workerIndex}: Continuing to next iteration...`);
             }
+            
+            console.log(`Worker ${workerIndex} exiting - queue exhausted`);
         });
 
-        await Promise.all(processingPromises);
+        // Wait for all workers to complete
+        await Promise.all(workers);
+
+        console.log(`All workers completed. Processing ${completedResults.size} results`);
 
         // Add results to session in correct order
         for (let i = session.currentIndex; i < session.consumerNumbers.length; i++) {
@@ -260,9 +296,25 @@ async function processConsumerNumbers(sessionId) {
             }
         }
 
+        console.log(`Session ${sessionId}: Added ${session.results.length} results to session`);
+
         session.currentIndex = session.consumerNumbers.length;
         session.status = 'completed';
+        
+        // Create Excel file with results
+        try {
+            console.log(`Creating Excel file for session ${sessionId} with ${session.results.length} results`);
+            const excelPath = await excelProcessor.writeResults(session.results, sessionId);
+            console.log(`Excel file created: ${excelPath}`);
+        } catch (error) {
+            console.error(`Error creating Excel file for session ${sessionId}:`, error);
+            session.status = 'error';
+            io.emit('processing-error', { sessionId, error: 'Failed to create Excel file' });
+            return;
+        }
+        
         io.emit('processing-complete', { sessionId });
+        io.emit('extraction-complete', { sessionId, autoDownload: false });
 
     } catch (error) {
         console.error('Processing error:', error);
@@ -277,22 +329,31 @@ async function processConsumer(consumerNo, _, sessionId) {
     let retries = 0;
     const maxRetries = 3;
     
+    console.log(`processConsumer: Starting processing for consumer ${consumerNo}`);
+    
     while (retries < maxRetries) {
         try {
+            console.log(`processConsumer: Getting available browser for consumer ${consumerNo} (attempt ${retries + 1})`);
             browserId = await browserManager.getAvailableBrowser();
+            console.log(`processConsumer: Got browser ${browserId} for consumer ${consumerNo}`);
+            
             const formattedConsumerNo = consumerNo.toString().padStart(11, '0');
 
             console.log(`Processing consumer ${formattedConsumerNo} on ${browserId}`);
             io.emit('processing-update', { sessionId, browserId, consumerNo: formattedConsumerNo });
 
             await browserManager.navigateToMGVCL(browserId);
+            console.log(`processConsumer: Navigated to MGVCL for consumer ${consumerNo}`);
             await browserManager.selectCompany(browserId, 'MGVCL');
+            console.log(`processConsumer: Selected company for consumer ${consumerNo}`);
             await browserManager.enterConsumerNumber(browserId, formattedConsumerNo);
+            console.log(`processConsumer: Entered consumer number for consumer ${consumerNo}`);
 
             const captchaRequired = await browserManager.isCaptchaRequired(browserId);
             console.log(`Captcha required for ${formattedConsumerNo}: ${captchaRequired}`);
 
             if (captchaRequired) {
+                console.log(`processConsumer: Captcha required for consumer ${consumerNo}, waiting for user input`);
                 const session = activeSessions.get(sessionId);
                 if (!session) throw new Error('Session not found');
 
@@ -319,9 +380,21 @@ async function processConsumer(consumerNo, _, sessionId) {
                         throw new Error('Captcha timeout');
                     }
                 }
+                console.log(`processConsumer: Captcha submitted for consumer ${consumerNo}`);
             }
 
+            console.log(`processConsumer: Submitting and getting results for consumer ${consumerNo}`);
             const billingData = await browserManager.submitAndGetResults(browserId);
+            console.log(`processConsumer: Successfully completed consumer ${consumerNo}`);
+            console.log(`processConsumer: Returning result for consumer ${consumerNo}`);
+            
+            // Release browser before returning
+            if (browserId) {
+                console.log(`processConsumer: Releasing browser ${browserId} for consumer ${consumerNo}`);
+                browserManager.releaseBrowser(browserId);
+                console.log(`processConsumer: Browser ${browserId} released and made available for next consumer`);
+            }
+            
             return {
                 consumerNo: formattedConsumerNo,
                 ...billingData,
@@ -333,18 +406,28 @@ async function processConsumer(consumerNo, _, sessionId) {
             console.error(`Error processing consumer ${consumerNo} (attempt ${retries}):`, error);
             
             if (retries >= maxRetries) {
+                console.log(`processConsumer: Max retries reached for consumer ${consumerNo}, throwing error`);
+                // Release browser before throwing error
+                if (browserId) {
+                    console.log(`processConsumer: Releasing browser ${browserId} for consumer ${consumerNo} after error`);
+                    browserManager.releaseBrowser(browserId);
+                }
                 throw error;
+            }
+            
+            // Release browser before retry
+            if (browserId) {
+                console.log(`processConsumer: Releasing browser ${browserId} for consumer ${consumerNo} before retry`);
+                browserManager.releaseBrowser(browserId);
             }
             
             // Wait before retry
             await new Promise(resolve => setTimeout(resolve, 5000));
-            
-        } finally {
-            if (browserId) {
-                browserManager.releaseBrowser(browserId);
-            }
         }
     }
+    
+    console.log(`processConsumer: Exiting processConsumer for consumer ${consumerNo} - all retries exhausted`);
+    throw new Error(`Failed to process consumer ${consumerNo} after ${maxRetries} retries`);
 }
 
 
