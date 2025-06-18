@@ -365,31 +365,87 @@ class BrowserManager extends EventEmitter {
         try {
             // Add retry mechanism with delay
             let retries = 0;
-            const maxRetries = 3;
+            const maxRetries = 5; // Increased retries
             
             while (retries < maxRetries) {
-                // Check if bill details are visible and populated
-                const detailsVisible = await page.evaluate(() => {
+                // Check if bill details are visible and populated with more detailed logging
+                const pageState = await page.evaluate(() => {
                     const details = document.getElementById('detailconsnumber');
                     const consumerName = document.getElementById('ConsumerName');
-                    return details?.style.display !== 'none' && 
-                           consumerName?.value !== undefined && 
-                           consumerName?.value !== '';
+                    const inputConsNumber = document.getElementById('inputconsnumber');
+                    
+                    return {
+                        detailsDisplay: details?.style.display,
+                        detailsVisible: details?.style.display !== 'none',
+                        consumerNameValue: consumerName?.value,
+                        consumerNameExists: !!consumerName,
+                        inputConsNumberVisible: inputConsNumber?.style.display !== 'none',
+                        pageTitle: document.title,
+                        url: window.location.href
+                    };
                 });
 
-                if (detailsVisible) {
-                    console.log(`[${browserId}] Extracting billing data...`);
+                console.log(`[${browserId}] Page state check (attempt ${retries + 1}):`, pageState);
+
+                // Check if we're still on the input page (captcha failed or page didn't change)
+                if (pageState.inputConsNumberVisible) {
+                    console.log(`[${browserId}] Still on input page, checking for error modals...`);
+                    
+                    // Check for error modals
+                    const hasError = await page.evaluate(() => {
+                        const invalidConsumerModal = document.getElementById('invalidconsumerno');
+                        const invalidCaptchaModal = document.getElementById('invalidcaptchmodal');
+                        return {
+                            invalidConsumer: invalidConsumerModal?.classList.contains('in') || 
+                                           invalidConsumerModal?.style.display === 'block',
+                            invalidCaptcha: invalidCaptchaModal?.classList.contains('in') || 
+                                          invalidCaptchaModal?.style.display === 'block'
+                        };
+                    });
+
+                    if (hasError.invalidConsumer) {
+                        throw new Error('Invalid consumer number');
+                    }
+                    
+                    if (hasError.invalidCaptcha) {
+                        throw new Error('Invalid captcha');
+                    }
+                }
+
+                // Check if bill details are visible and populated
+                if (pageState.detailsVisible && pageState.consumerNameValue) {
+                    console.log(`[${browserId}] Bill details visible, extracting data...`);
                     return await this.extractBillingData(page);
+                }
+
+                // Additional check: if we're transitioning from input to details page
+                if (!pageState.inputConsNumberVisible && !pageState.detailsVisible) {
+                    console.log(`[${browserId}] Page in transitional state, waiting...`);
+                    await page.waitForTimeout(2000);
+                    continue;
                 }
 
                 retries++;
                 if (retries < maxRetries) {
                     console.log(`[${browserId}] Waiting for bill details to load (attempt ${retries})...`);
-                    await page.waitForTimeout(2000); // Wait 2 seconds between checks
+                    await page.waitForTimeout(3000); // Increased wait time to 3 seconds
                 }
             }
 
-            throw new Error('Bill details not visible after retries');
+            // If we get here, let's try to get more debugging info
+            const finalState = await page.evaluate(() => {
+                return {
+                    detailsElement: !!document.getElementById('detailconsnumber'),
+                    detailsDisplay: document.getElementById('detailconsnumber')?.style.display,
+                    consumerNameElement: !!document.getElementById('ConsumerName'),
+                    consumerNameValue: document.getElementById('ConsumerName')?.value,
+                    pageTitle: document.title,
+                    bodyText: document.body.innerText.substring(0, 200) // First 200 chars for debugging
+                };
+            });
+
+            console.error(`[${browserId}] Final page state:`, finalState);
+            throw new Error(`Bill details not visible after ${maxRetries} retries. Details: ${JSON.stringify(finalState)}`);
 
         } catch (error) {
             console.error(`[${browserId}] Submit and results error:`, error);
@@ -399,11 +455,14 @@ class BrowserManager extends EventEmitter {
 
     async extractBillingData(page) {
         try {
-            // Wait for results table or content to load with longer timeout
-            await page.waitForSelector('table.table-hover', { timeout: 10000 });
-            await page.waitForTimeout(1000); // Extra wait for data to populate
+            console.log(`[${page.browserId || 'unknown'}] Starting data extraction...`);
+            
+            // Wait for the billing details to be visible and populated
+            await page.waitForSelector('#detailconsnumber', { timeout: 15000 });
+            await page.waitForSelector('#ConsumerName', { timeout: 10000 });
+            await page.waitForTimeout(2000); // Extra wait for data to populate
 
-            // Extract data based on the MGVCL page structure
+            // Extract data based on the actual HTML structure
             const data = await page.evaluate(() => {
                 const result = {
                     consumerName: '',
@@ -414,20 +473,42 @@ class BrowserManager extends EventEmitter {
                     amountToPay: ''
                 };
 
-                // Find the main table with billing data
+                // Extract data using direct ID selectors from the HTML structure
+                const consumerNameEl = document.getElementById('ConsumerName');
+                const custIdEl = document.getElementById('CUST_ID');
+                const lastPaidEl = document.getElementById('lastpaid');
+                const billAmtEl = document.getElementById('billamt');
+                const billDateEl = document.getElementById('billdate');
+                const payAmountEl = document.getElementById('payamount');
+
+                // Map the values to result object
+                if (consumerNameEl && consumerNameEl.value) {
+                    result.consumerName = consumerNameEl.value.trim();
+                }
+                
+                if (custIdEl && custIdEl.value) {
+                    result.consumerNo = custIdEl.value.trim();
+                }
+                
+                if (lastPaidEl && lastPaidEl.value) {
+                    result.lastPaidDetail = lastPaidEl.value.trim();
+                }
+                
+                if (billAmtEl && billAmtEl.value) {
+                    result.outstandingAmount = billAmtEl.value.trim();
+                }
+                
+                if (billDateEl && billDateEl.value) {
+                    result.billDate = billDateEl.value.trim();
+                }
+                
+                if (payAmountEl && payAmountEl.value) {
+                    result.amountToPay = payAmountEl.value.trim();
+                }
+
+                // Also try to extract from table structure as fallback
                 const table = document.querySelector('table.table-hover');
                 if (table) {
-                    // Use a map of field labels to result keys for more reliable matching
-                    const fieldMap = {
-                        'Consumer Name': 'consumerName',
-                        'CONSUMER NO.*': 'consumerNo',
-                        'Last Paid Detail': 'lastPaidDetail',
-                        'Outstanding Amount(Tentative)': 'outstandingAmount',
-                        'Bill Date': 'billDate',
-                        'Amount to Pay*': 'amountToPay'
-                    };
-
-                    // Process each row in the table
                     const rows = Array.from(table.querySelectorAll('tr'));
                     rows.forEach(row => {
                         const cells = row.querySelectorAll('td');
@@ -436,29 +517,32 @@ class BrowserManager extends EventEmitter {
                             const input = cells[2]?.querySelector('input');
                             const value = input ? input.value?.trim() : cells[2]?.innerText?.trim();
                             
-                            // Map the field to the corresponding result key
-                            const resultKey = fieldMap[label];
-                            if (resultKey && value) {
-                                result[resultKey] = value;
+                            // Map labels to result keys
+                            if (label === 'Consumer Name' && value && !result.consumerName) {
+                                result.consumerName = value;
+                            } else if (label === 'CONSUMER NO.*' && value && !result.consumerNo) {
+                                result.consumerNo = value;
+                            } else if (label === 'Last Paid Detail' && value && !result.lastPaidDetail) {
+                                result.lastPaidDetail = value;
+                            } else if (label === 'Outstanding Amount(Tentative)' && value && !result.outstandingAmount) {
+                                result.outstandingAmount = value;
+                            } else if (label === 'Bill Date' && value && !result.billDate) {
+                                result.billDate = value;
+                            } else if (label === 'Amount to Pay*' && value && !result.amountToPay) {
+                                result.amountToPay = value;
                             }
                         }
                     });
                 }
 
-                // Double-check with direct ID selectors as fallback
-                if (!result.consumerName) result.consumerName = document.getElementById('ConsumerName')?.value?.trim() || '';
-                if (!result.consumerNo) result.consumerNo = document.getElementById('CUST_ID')?.value?.trim() || '';
-                if (!result.lastPaidDetail) result.lastPaidDetail = document.getElementById('lastpaid')?.value?.trim() || '';
-                if (!result.outstandingAmount) result.outstandingAmount = document.getElementById('billamt')?.value?.trim() || '';
-                if (!result.billDate) result.billDate = document.getElementById('billdate')?.value?.trim() || '';
-                if (!result.amountToPay) result.amountToPay = document.getElementById('payamount')?.value?.trim() || '';
-
-                // Validate extraction
+                // Validate extraction - require at least consumer name and number
                 const hasData = result.consumerName && result.consumerNo;
                 if (!hasData) {
-                    throw new Error('Failed to extract billing data');
+                    console.error('Extraction failed - missing required data:', result);
+                    throw new Error('Failed to extract billing data - missing consumer name or number');
                 }
 
+                console.log('Data extraction successful:', result);
                 return result;
             });
 
@@ -468,10 +552,38 @@ class BrowserManager extends EventEmitter {
                 this.emit('extraction-complete');
             }
 
+            console.log(`[${page.browserId || 'unknown'}] Data extraction completed:`, data);
             return data;
 
         } catch (error) {
-            console.error('Data extraction error:', error);
+            console.error(`[${page.browserId || 'unknown'}] Data extraction error:`, error);
+            
+            // Try to get page state for debugging
+            try {
+                const debugInfo = await page.evaluate(() => {
+                    return {
+                        detailConsNumberExists: !!document.getElementById('detailconsnumber'),
+                        consumerNameExists: !!document.getElementById('ConsumerName'),
+                        consumerNameValue: document.getElementById('ConsumerName')?.value,
+                        custIdExists: !!document.getElementById('CUST_ID'),
+                        custIdValue: document.getElementById('CUST_ID')?.value,
+                        lastPaidExists: !!document.getElementById('lastpaid'),
+                        lastPaidValue: document.getElementById('lastpaid')?.value,
+                        billAmtExists: !!document.getElementById('billamt'),
+                        billAmtValue: document.getElementById('billamt')?.value,
+                        billDateExists: !!document.getElementById('billdate'),
+                        billDateValue: document.getElementById('billdate')?.value,
+                        payAmountExists: !!document.getElementById('payamount'),
+                        payAmountValue: document.getElementById('payamount')?.value,
+                        pageTitle: document.title,
+                        bodyText: document.body.innerText.substring(0, 300)
+                    };
+                });
+                console.error('Debug info:', debugInfo);
+            } catch (debugError) {
+                console.error('Could not get debug info:', debugError);
+            }
+            
             throw error;
         }
     }
