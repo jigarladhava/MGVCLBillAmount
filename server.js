@@ -317,10 +317,9 @@ async function processConsumerNumbers(sessionId) {
         let processingCompleted = false;
           const completionChecker = setInterval(() => {
             const elapsedTime = Date.now() - startTime;
-            
-            // Show detailed progress info
+              // Show detailed progress info
             console.log(`\n----- PROGRESS MONITOR -----`);
-            console.log(`Completion check: ${completedConsumers}/${queue.length} consumers processed (${Math.floor(elapsedTime/1000)}s elapsed)`);
+            console.log(`Completion check: ${completedConsumers}/${queue.length} consumers processed (counter) | ${session.results.length}/${queue.length} (results array) | (${Math.floor(elapsedTime/1000)}s elapsed)`);
             
             // Get in-progress consumer details 
             const inProgressList = Array.from(consumersInProgress).join(', ');
@@ -329,19 +328,29 @@ async function processConsumerNumbers(sessionId) {
             // List completed consumers
             const completedList = session.results.map(r => r.consumerNo || 'unknown').join(', ');
             console.log(`Completed consumers (${session.results.length}): ${completedList || 'none'}`);
-            console.log(`-------------------------\n`);
-              // Check different completion conditions
-            const isComplete = completedConsumers >= queue.length && queue.length > 0;
-            const isTimeout = elapsedTime > maxProcessingTime;
-            const isStalled = elapsedTime > 60000 && completedConsumers > 0 && 
-                              elapsedTime > (lastCompletionTime + 60000); // No progress for 1 minute
-            const shouldForceComplete = completedConsumers >= (queue.length * 0.8) && 
-                                       elapsedTime > 120000; // 80% complete and running for 2+ minutes
+            console.log(`-------------------------\n`);            // Check for inconsistency between counters and fix
+            if (completedConsumers !== session.results.length) {
+                console.log(`\n⚠️ Counter inconsistency detected: completedConsumers=${completedConsumers}, results.length=${session.results.length}`);
+                console.log(`Reconciling counters...`);
+                completedConsumers = session.results.length;
+                console.log(`Counter updated: completedConsumers=${completedConsumers}\n`);
+            }
             
-            if (isComplete || isTimeout || isStalled || shouldForceComplete) {
+            // Check different completion conditions
+            const isComplete = completedConsumers >= queue.length && queue.length > 0;
+            
+            // Alternative check: also consider session.results.length as a source of truth
+            const isCompleteByResults = session.results.length >= queue.length && queue.length > 0;
+            
+            const isTimeout = elapsedTime > maxProcessingTime;
+            const isStalled = elapsedTime > 60000 && session.results.length > 0 && 
+                              elapsedTime > (lastCompletionTime + 60000); // No progress for 1 minute
+            const shouldForceComplete = session.results.length >= (queue.length * 0.8) && 
+                                       elapsedTime > 120000; // 80% complete and running for 2+ minutes
+              if (isComplete || isCompleteByResults || isTimeout || isStalled || shouldForceComplete) {
                 let completionReason = "";
                 
-                if (isComplete) {
+                if (isComplete || isCompleteByResults) {
                     completionReason = "All consumers processed successfully";
                 } else if (isTimeout) {
                     completionReason = `Processing timed out after ${Math.floor(elapsedTime/1000)} seconds`;
@@ -436,7 +445,98 @@ async function processConsumerNumbers(sessionId) {
         }
 
         console.log(`Starting processing for session ${sessionId} with ${queue.length} consumers`);
-        console.log(`Consumer queue: [${queue.join(', ')}]`);        // Create a shared function to handle consumer completion
+        console.log(`Consumer queue: [${queue.join(', ')}]`);        // Add a function to check and log if all consumers are processed
+        const checkCompletion = () => {
+            // If all consumers are processed, emit a completion event
+            if (session.results.length >= queue.length && !processingCompleted) {
+                console.log(`\n🎉 ALL CONSUMERS PROCESSED 🎉`);
+                console.log(`Total consumers: ${queue.length}`);
+                console.log(`Completed consumers: ${session.results.length}`);
+                console.log(`Recorded completedConsumers count: ${completedConsumers}`);
+                
+                // Force reconciliation
+                completedConsumers = session.results.length;
+                
+                // This will trigger the completion code in the interval
+                lastCompletionTime = Date.now();
+                
+                // Force completion immediately instead of waiting for the next interval
+                processingCompleted = true;
+                clearInterval(completionChecker);
+                finishProcessing();
+            }
+        };
+        
+        // Helper function to log progress
+        const logProgress = (elapsedTime, session, queue, completedConsumers, consumersInProgress) => {
+            console.log(`\n----- PROGRESS MONITOR -----`);
+            console.log(`Completion check: ${completedConsumers}/${queue.length} consumers processed (counter) | ${session.results.length}/${queue.length} (results array) | (${Math.floor(elapsedTime/1000)}s elapsed)`);
+            
+            // Get in-progress consumer details 
+            const inProgressList = Array.from(consumersInProgress).join(', ');
+            console.log(`In-progress consumers (${consumersInProgress.size}): ${inProgressList || 'none'}`);
+            
+            // List completed consumers
+            const completedList = session.results.map(r => r.consumerNo || 'unknown').join(', ');
+            console.log(`Completed consumers (${session.results.length}): ${completedList || 'none'}`);
+            console.log(`-------------------------\n`);
+        };
+        
+        // Helper function to handle completion of all processing
+        const handleSessionCompletion = (completionReason) => {
+            if (processingCompleted) return; // Prevent duplicate completion processing
+            
+            processingCompleted = true;
+            clearInterval(completionChecker); // Stop the completion checker
+            console.log(`\n📊 Processing completed: ${completionReason}`);
+            
+            // Mark any remaining consumers as errors
+            if (session.results.length < queue.length) {
+                console.log(`Adding ${queue.length - session.results.length} remaining consumers as errors`);
+                
+                const processedConsumerNos = new Set(session.results.map(r => r.consumerNo));
+                for (const consumerNo of queue) {
+                    const formattedConsumerNo = consumerNo.toString().padStart(11, '0');
+                    if (!processedConsumerNos.has(formattedConsumerNo)) {
+                        session.results.push({
+                            consumerNo: formattedConsumerNo,
+                            error: 'Processing timed out or failed',
+                            status: 'error'
+                        });
+                    }
+                }
+            }
+            
+            // Generate Excel file with results
+            generateResultsExcel(session)
+                .then(filePath => {
+                    session.resultsFilePath = filePath;
+                    session.status = 'completed';
+                    
+                    // Emit completion event to all clients
+                    io.emit('processing-completed', { 
+                        sessionId,
+                        message: completionReason,
+                        totalProcessed: session.results.length,
+                        resultsFilePath: filePath.replace(/^.*[\\\/]/, '') // Just the filename
+                    });
+                    
+                    // Log a very visible completion message
+                    console.log(`\n==================================================`);
+                    console.log(`🎉 PROCESSING COMPLETE - DOWNLOAD TRIGGERED 🎉`);
+                    console.log(`==================================================\n`);
+                })
+                .catch(error => {
+                    console.error(`Error creating Excel file:`, error);
+                    session.status = 'error';
+                    io.emit('processing-error', { 
+                        sessionId, 
+                        error: 'Failed to create Excel file: ' + error.message 
+                    });
+                });
+        };
+        
+        // Create a shared function to handle consumer completion
         const handleConsumerCompletion = (consumerNo, result, workerInfo = '') => {
             // Add to results
             session.results.push(result);
@@ -460,6 +560,9 @@ async function processConsumerNumbers(sessionId) {
                     total: queue.length
                 }
             });
+            
+            // Check completion status
+            checkCompletion();
         };
 
         // Add browser availability listener for processing consumers from queue
