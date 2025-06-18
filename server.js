@@ -64,6 +64,23 @@ const consumersInProgress = new Set();
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
     
+    // Check if there are completed sessions that need to re-send the download signal
+    for (const [sessionId, session] of activeSessions.entries()) {
+        if (session.status === 'completed' && session.resultsPath) {
+            console.log(`Re-sending completion events for previously completed session ${sessionId}`);
+            
+            // Send both events with delay
+            setTimeout(() => {
+                console.log(`Re-sending processing-complete event for session ${sessionId}`);
+                socket.emit('processing-complete', { sessionId });
+                
+                setTimeout(() => {
+                    console.log(`Re-sending extraction-complete event for session ${sessionId}`);
+                    socket.emit('extraction-complete', { sessionId, autoDownload: true });
+                }, 1000);
+            }, 2000);
+        }
+    }
     socket.on('captcha-response', async (data) => {
         const { sessionId, captcha, browserId, consumerNo } = data;
         const session = activeSessions.get(sessionId);
@@ -189,19 +206,77 @@ app.get('/status/:sessionId', (req, res) => {
 app.get('/download/:sessionId', async (req, res) => {
     try {
         const { sessionId } = req.params;
+        const timestamp = req.query.t || Date.now();
+        console.log(`\n==== DOWNLOAD REQUEST ====`);
+        console.log(`Download requested for session: ${sessionId} (timestamp: ${timestamp})`);
         const excelProcessor = new ExcelProcessor();
         
-        // Get results path for the session
-        const resultsPath = path.join(excelProcessor.resultsDir, `MGVCL_Results_${sessionId}.xlsx`);
+        // Check if session exists
+        const session = activeSessions.get(sessionId);
+        if (session) {
+            console.log(`Session status: ${session.status}, Results: ${session.results ? session.results.length : 0}`);
+        } else {
+            console.log(`Session ${sessionId} not found in active sessions`);
+        }
         
-        if (!fs.existsSync(resultsPath)) {
+        // Look for the Excel file in the results directory
+        const resultsDir = excelProcessor.resultsDir;
+        console.log(`Checking results directory: ${resultsDir}`);
+        const files = fs.readdirSync(resultsDir);
+        console.log(`Found ${files.length} files in results directory`);
+        
+        // Find the file that matches the session ID pattern
+        const targetFile = files.find(file => 
+            file.startsWith(`MGVCL_Results_${sessionId}`) && file.endsWith('.xlsx')
+        );
+        
+        // Debug log all available files for this session
+        const matchingFiles = files.filter(file => file.includes(sessionId));
+        console.log(`Files matching session ${sessionId}:`, matchingFiles);
+        
+        if (!targetFile) {
+            console.error(`No Excel file found for session ${sessionId}. Available files:`, files);
             return res.status(404).json({ error: 'Results file not found' });
         }
         
-        res.download(resultsPath);
-    } catch (error) {
-        console.error('Download error:', error);
-        res.status(500).json({ error: 'Failed to download results' });
+        const resultsPath = path.join(resultsDir, targetFile);
+        console.log(`Found results file: ${resultsPath}`);
+        console.log(`Initiating download for file: ${targetFile}`);
+        
+        // Set proper headers for file download
+        res.setHeader('Content-Disposition', `attachment; filename="${targetFile}"`);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        console.log(`Set headers for file download: ${targetFile}`);
+          console.log(`Starting download response for session ${sessionId}`);
+        
+        // Check if file exists and is accessible
+        try {
+            fs.accessSync(resultsPath, fs.constants.F_OK | fs.constants.R_OK);
+            console.log(`File exists and is readable: ${resultsPath}`);
+            
+            // Get file stats
+            const stats = fs.statSync(resultsPath);
+            console.log(`File size: ${stats.size} bytes, Created: ${stats.birthtime.toISOString()}`);
+            
+            if (stats.size === 0) {
+                console.error(`Warning: File exists but is empty: ${resultsPath}`);
+            }
+        } catch (accessErr) {
+            console.error(`File access error: ${accessErr.message}`);
+            return res.status(500).json({ error: 'File exists but cannot be accessed' });
+        }
+        
+        // Send file download
+        res.download(resultsPath, targetFile, (err) => {
+            if (err) {
+                console.error(`Error during download for session ${sessionId}:`, err);
+            } else {
+                console.log(`File successfully sent for download: ${targetFile}`);
+                console.log(`==== DOWNLOAD COMPLETE ====\n`);
+            }
+        });} catch (error) {
+        console.error(`Download error for session ${req.params.sessionId}:`, error);
+        res.status(500).json({ error: `Failed to download results: ${error.message}` });
     }
 });
 
@@ -219,7 +294,13 @@ app.get('/template', async (req, res) => {
 // Process consumer numbers
 async function processConsumerNumbers(sessionId) {
     const session = activeSessions.get(sessionId);
-    if (!session) return;
+    if (!session) {
+        console.error(`Session ${sessionId} not found, cannot process`);
+        return;
+    }
+
+    console.log(`Starting consumer processing for session ${sessionId}`);
+    let processingError = null;
 
     try {
         await browserManager.initialize();
@@ -227,10 +308,162 @@ async function processConsumerNumbers(sessionId) {
 
         const queue = [...session.consumerNumbers];
         let currentQueueIndex = 0;
-        let completedConsumers = 0;
+        let completedConsumers = 0;        // Set up a completion checker with two safeguards:
+        // 1. Regular interval check
+        // 2. Max processing time check (ensures completion even if something gets stuck)
+        const maxProcessingTime = 15 * 60 * 1000; // 15 minutes max processing time
+        const startTime = Date.now();
+        let lastCompletionTime = startTime; // Track the last time a consumer was completed
+        let processingCompleted = false;
+          const completionChecker = setInterval(() => {
+            const elapsedTime = Date.now() - startTime;
+            
+            // Show detailed progress info
+            console.log(`\n----- PROGRESS MONITOR -----`);
+            console.log(`Completion check: ${completedConsumers}/${queue.length} consumers processed (${Math.floor(elapsedTime/1000)}s elapsed)`);
+            
+            // Get in-progress consumer details 
+            const inProgressList = Array.from(consumersInProgress).join(', ');
+            console.log(`In-progress consumers (${consumersInProgress.size}): ${inProgressList || 'none'}`);
+            
+            // List completed consumers
+            const completedList = session.results.map(r => r.consumerNo || 'unknown').join(', ');
+            console.log(`Completed consumers (${session.results.length}): ${completedList || 'none'}`);
+            console.log(`-------------------------\n`);
+              // Check different completion conditions
+            const isComplete = completedConsumers >= queue.length && queue.length > 0;
+            const isTimeout = elapsedTime > maxProcessingTime;
+            const isStalled = elapsedTime > 60000 && completedConsumers > 0 && 
+                              elapsedTime > (lastCompletionTime + 60000); // No progress for 1 minute
+            const shouldForceComplete = completedConsumers >= (queue.length * 0.8) && 
+                                       elapsedTime > 120000; // 80% complete and running for 2+ minutes
+            
+            if (isComplete || isTimeout || isStalled || shouldForceComplete) {
+                let completionReason = "";
+                
+                if (isComplete) {
+                    completionReason = "All consumers processed successfully";
+                } else if (isTimeout) {
+                    completionReason = `Processing timed out after ${Math.floor(elapsedTime/1000)} seconds`;
+                } else if (isStalled) {
+                    completionReason = `Processing appears stalled - no progress for over 1 minute`;
+                } else if (shouldForceComplete) {
+                    completionReason = `Force completing with ${completedConsumers}/${queue.length} (${Math.round(completedConsumers/queue.length*100)}%) after ${Math.floor(elapsedTime/1000)} seconds`;
+                }
+                
+                console.log(`\n⚠️ ${completionReason}`);
+                
+                if (!processingCompleted) {
+                    processingCompleted = true;
+                    clearInterval(completionChecker);
+                    finishProcessing();
+                }
+            }
+        }, 5000);        // Function to finish processing and create results file
+        async function finishProcessing() {
+            console.log(`\n========================================`);
+            
+            const completionPercentage = Math.round((completedConsumers / queue.length) * 100);
+            
+            if (completedConsumers === queue.length) {
+                console.log(`🎉 ALL CONSUMERS PROCESSED SUCCESSFULLY! (${completedConsumers}/${queue.length})`);
+            } else {
+                console.log(`⚠️ PARTIAL COMPLETION: ${completedConsumers}/${queue.length} consumers (${completionPercentage}%)`);
+                
+                // Add any non-processed consumers to results with error
+                const processedConsumerNumbers = new Set(session.results.map(r => r.consumerNo));
+                const missingConsumers = queue.filter(consumerNo => !processedConsumerNumbers.has(consumerNo));
+                
+                if (missingConsumers.length > 0) {
+                    console.log(`Adding ${missingConsumers.length} non-processed consumers to results with error status`);
+                    
+                    missingConsumers.forEach(consumerNo => {
+                        session.results.push({
+                            consumerNo,
+                            error: 'Processing timed out or was incomplete'
+                        });
+                    });
+                }
+            }
+            
+            console.log(`Total consumers processed: ${completedConsumers}/${queue.length} (${completionPercentage}%)`);
+            console.log(`*** ALL CONSUMER NUMBERS PROCESSING COMPLETED FOR SESSION ${sessionId} ***`);
+            console.log(`========================================\n`);
+            
+            // Safeguard: make sure session still exists
+            if (!activeSessions.has(sessionId)) {
+                console.error(`Cannot finish processing - session ${sessionId} no longer exists`);
+                return;
+            }
+            
+            // Create Excel file with results
+            try {
+                // Make sure we have results array
+                if (!session.results) {
+                    console.warn(`No results array for session ${sessionId}, initializing empty array`);
+                    session.results = [];
+                }
+                
+                console.log(`Creating Excel file for session ${sessionId} with ${session.results.length} results`);
+                const excelPath = await excelProcessor.writeResults(session.results, sessionId);                console.log(`Excel file created: ${excelPath}`);
+                
+                // Update session status and store results path for reconnection handling
+                session.currentIndex = session.consumerNumbers.length;
+                session.status = 'completed';
+                session.resultsPath = excelPath; // Store the path for reconnections
+                
+                // Emit completion events in correct sequence
+                console.log(`Emitting completion events for session ${sessionId}`);
+                io.emit('processing-complete', { sessionId });
+                console.log(`Sent processing-complete event to client for session ${sessionId}`);
+                
+                // Add a slight delay to ensure processing-complete is processed before extraction-complete
+                setTimeout(() => {
+                    console.log(`Emitting extraction-complete event with autoDownload=true for session ${sessionId}`);
+                    io.emit('extraction-complete', { sessionId, autoDownload: true });
+                    console.log(`Sent extraction-complete event to client for session ${sessionId} - file should be automatically downloaded`);
+                    
+                    // Log a very visible completion message
+                    console.log(`\n==================================================`);
+                    console.log(`🎉 PROCESSING COMPLETE - DOWNLOAD TRIGGERED 🎉`);
+                    console.log(`==================================================\n`);
+                }, 1000);
+            } catch (error) {
+                console.error(`Error creating Excel file for session ${sessionId}:`, error);
+                session.status = 'error';
+                io.emit('processing-error', { sessionId, error: 'Failed to create Excel file: ' + error.message });
+            }
+        }
 
-        // Add browser availability listener
-        browserManager.on('browser-available', async (browserId) => {
+        console.log(`Starting processing for session ${sessionId} with ${queue.length} consumers`);
+        console.log(`Consumer queue: [${queue.join(', ')}]`);        // Create a shared function to handle consumer completion
+        const handleConsumerCompletion = (consumerNo, result, workerInfo = '') => {
+            // Add to results
+            session.results.push(result);
+            
+            // Update counter and log progress
+            completedConsumers++;
+            lastCompletionTime = Date.now(); // Update the last completion time
+            
+            console.log(`\n✅ ${workerInfo} Completed consumer ${consumerNo}. Progress: ${completedConsumers}/${queue.length}\n`);
+            
+            // Clean up tracking
+            consumersInProgress.delete(consumerNo);
+            
+            // Emit progress update to frontend
+            io.emit('consumer-processed', { 
+                sessionId,
+                consumerNo,
+                result,
+                progress: {
+                    completed: completedConsumers,
+                    total: queue.length
+                }
+            });
+        };
+
+        // Add browser availability listener for processing consumers from queue
+        browserManager.on('browser-available', (browserId) => {
             // Get next consumer atomically
             const index = currentQueueIndex++;
             if (index < queue.length) {
@@ -238,71 +471,85 @@ async function processConsumerNumbers(sessionId) {
                 if (!consumersInProgress.has(nextConsumer)) {
                     consumersInProgress.add(nextConsumer);
                     console.log(`Processing next consumer ${nextConsumer} on browser_${browserId}`);
-                    processConsumer(nextConsumer, browserId, sessionId).catch(console.error);
+                    
+                    // Process the consumer with explicit promise handling
+                    processConsumer(nextConsumer, browserId, sessionId)
+                        .then(result => {
+                            handleConsumerCompletion(nextConsumer, result, `[browser_${browserId}]`);
+                        })
+                        .catch(error => {
+                            console.error(`Error processing consumer ${nextConsumer}:`, error);
+                            handleConsumerCompletion(
+                                nextConsumer, 
+                                { consumerNo: nextConsumer, error: error.message },
+                                `[browser_${browserId}]`
+                            );
+                        });
                 }
             }
         });
 
-        console.log(`Starting processing for session ${sessionId} with ${queue.length} consumers`);
-        console.log(`Consumer queue: [${queue.join(', ')}]`);
-
-        // Create worker promises array with proper queue management
-        const workers = Array(browserManager.maxBrowsers).fill(null).map(async (_, workerIndex) => {
-            console.log(`Worker ${workerIndex} started`);
-            
-            while (true) {
-                // Get next consumer atomically
-                const index = currentQueueIndex++;
-                if (index >= queue.length) {
-                    console.log(`Worker ${workerIndex} finished - no more consumers in queue`);
-                    break;
-                }
-
+        // Start initial set of worker processes
+        for (let i = 0; i < Math.min(browserManager.maxBrowsers, queue.length); i++) {
+            const index = currentQueueIndex++;
+            if (index < queue.length) {
                 const consumerNo = queue[index];
+                consumersInProgress.add(consumerNo);
+                console.log(`Worker ${i}: Processing consumer ${consumerNo} (${index + 1}/${queue.length})`);
                 
-                try {
-                    if (!consumersInProgress.has(consumerNo)) {
-                        consumersInProgress.add(consumerNo);
-                        console.log(`Worker ${workerIndex}: Processing consumer ${consumerNo} (${index + 1}/${queue.length})`);
-                        const result = await processConsumer(consumerNo, workerIndex, sessionId);
-                        session.results.push(result);
-                        completedConsumers++;
-                        console.log(`Worker ${workerIndex}: Completed consumer ${consumerNo}. Progress: ${completedConsumers}/${queue.length}`);
-                    }
-                } catch (error) {
-                    console.error(`Worker ${workerIndex}: Error processing consumer ${consumerNo}:`, error);
-                    session.results.push({ consumerNo, error: error.message });
-                    completedConsumers++;
-                } finally {
-                    consumersInProgress.delete(consumerNo);
-                }
+                // Process the consumer with explicit promise handling
+                processConsumer(consumerNo, i, sessionId)
+                    .then(result => {
+                        handleConsumerCompletion(consumerNo, result, `Worker ${i}:`);
+                    })
+                    .catch(error => {
+                        console.error(`Worker ${i}: Error processing consumer ${consumerNo}:`, error);
+                        handleConsumerCompletion(
+                            consumerNo, 
+                            { consumerNo, error: error.message }, 
+                            `Worker ${i}:`
+                        );
+                    });
             }
-        });
-
-        // Wait for all workers to complete with timeout
-        await Promise.race([
-            Promise.all(workers),
-            new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Processing timeout')), 30 * 60 * 1000) // 30 min timeout
-            )
-        ]);
-
-        // Update session status
-        session.currentIndex = session.consumerNumbers.length;
-        session.status = 'completed';
-        
-        // Create Excel file with results
-        const excelPath = await excelProcessor.writeResults(session.results, sessionId);
-        console.log(`Excel file created: ${excelPath}`);
-        
-        io.emit('processing-complete', { sessionId });
-        io.emit('extraction-complete', { sessionId, autoDownload: false });
-
-    } catch (error) {
+        }    } catch (error) {
+        processingError = error;
         console.error('Processing error:', error);
+        console.log(`Error occurred during processing for session ${sessionId}:`, error);
         session.status = 'error';
-        io.emit('processing-error', { sessionId, error: error.message });
+        
+        // Handle the error by attempting to generate the results anyway
+        console.log('Attempting to generate results despite the error...');
+        
+        // Set up results array if needed
+        if (!session.results) {
+            session.results = [];
+        }
+        
+        // Create and emit results
+        try {
+            console.log(`Creating Excel file for session ${sessionId} with ${session.results.length} results (after error)`);
+            const excelPath = await excelProcessor.writeResults(session.results, sessionId);
+            console.log(`Excel file created despite error: ${excelPath}`);
+            
+            // Emit completion events
+            console.log(`Emitting completion events for session ${sessionId} (after error)`);
+            io.emit('processing-complete', { sessionId });
+            io.emit('processing-error', { sessionId, error: error.message });
+            
+            // Add a slight delay to ensure events are processed before extraction-complete
+            setTimeout(() => {
+                console.log(`Emitting extraction-complete event for session ${sessionId} (after error)`);
+                io.emit('extraction-complete', { sessionId, autoDownload: true });
+            }, 1000);
+        } catch (finalError) {
+            console.error(`Final error creating Excel file for session ${sessionId}:`, finalError);
+            io.emit('processing-error', { 
+                sessionId, 
+                error: `Failed to create Excel file after processing error: ${finalError.message}` 
+            });        }
     }
+    
+    console.log(`Processing function initiated for session ${sessionId}`);
 }
 
 // Update processConsumer function
@@ -421,12 +668,6 @@ server.listen(PORT, () => {
     console.log(`Open http://localhost:${PORT} to access the application`);
 });
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-    console.log('Shutting down gracefully...');
-    await browserManager.closeAll();
-    process.exit(0);
-});
 // Graceful shutdown
 process.on('SIGINT', async () => {
     console.log('Shutting down gracefully...');

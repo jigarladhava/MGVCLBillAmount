@@ -373,12 +373,18 @@ class MGVCLApp {
         if (data.sessionId !== this.currentSessionId) return;
 
         this.addLogEntry('success', 'All consumers processed successfully!');
+        
+        // Enable download button
+        this.downloadResults.disabled = false;
+        this.downloadResults.style.display = 'block';
+        
         this.showResultsSection();
         this.loadResultsSummary();
-    }
-
-    handleExtractionComplete(data) {
-        if (data.sessionId !== this.currentSessionId) return;
+    }    handleExtractionComplete(data) {
+        if (data.sessionId !== this.currentSessionId) {
+            console.log(`Ignoring extraction-complete event for different session: ${data.sessionId}`);
+            return;
+        }
         
         // Enable download button
         this.downloadResults.disabled = false;
@@ -388,9 +394,21 @@ class MGVCLApp {
         this.addLogEntry('success', 'All data extracted successfully! Ready for download.');
         this.showResultsSection();
         
-        // Auto-trigger download if configured
-        if (data.autoDownload) {
-            this.handleDownloadResults();
+        console.log(`Received extraction-complete event with autoDownload=${data.autoDownload}`);
+        
+        // Auto-trigger download if configured or by default
+        if (data.autoDownload !== false) {
+            this.addLogEntry('info', 'Automatically downloading results in 2 seconds...');
+            console.log(`Auto-download triggered for session ${this.currentSessionId}`);
+            
+            // Slightly longer delay to ensure UI updates before download starts
+            setTimeout(() => {
+                this.addLogEntry('info', 'Starting automatic download now...');
+                console.log(`Executing auto-download for session ${this.currentSessionId}`);
+                this.handleDownloadResults();
+            }, 2000);
+        } else {
+            console.log(`Auto-download disabled for session ${this.currentSessionId}, waiting for manual download`);
         }
     }
 
@@ -425,27 +443,83 @@ class MGVCLApp {
         } catch (error) {
             console.error('Error loading results summary:', error);
         }
-    }
-
-    async handleDownloadResults() {
+    }    async handleDownloadResults(retryCount = 0) {
         try {
-            const response = await fetch(`/download/${this.currentSessionId}`);
+            const maxRetries = 3;
+            this.addLogEntry('info', `Requesting download for session ${this.currentSessionId}${retryCount > 0 ? ` (Attempt ${retryCount + 1})` : ''}...`);
+            
+            const downloadUrl = `/download/${this.currentSessionId}`;
+            console.log(`Downloading results from: ${downloadUrl} - Attempt ${retryCount + 1}`);
+            
+            // Add timestamp to avoid caching issues
+            const timestampedUrl = `${downloadUrl}?t=${Date.now()}`;
+            const response = await fetch(timestampedUrl);
+            console.log('Download response status:', response.status, response.statusText);
+            
             if (response.ok) {
+                console.log('Download response received successfully, processing blob...');
                 const blob = await response.blob();
                 const url = window.URL.createObjectURL(blob);
+                console.log('Created object URL for download blob');
+                
+                // Get filename from response headers or use default
+                const contentDisposition = response.headers.get('content-disposition');
+                console.log('Content-Disposition header:', contentDisposition);
+                let filename = `MGVCL_Results_${this.currentSessionId}.xlsx`;
+                
+                if (contentDisposition) {
+                    const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+                    if (filenameMatch && filenameMatch[1]) {                        filename = filenameMatch[1].replace(/['"]/g, '');
+                        console.log('Parsed filename from Content-Disposition:', filename);
+                    }
+                }
+                
+                this.addLogEntry('info', `Downloading file: ${filename}`);
+                console.log(`Starting download of file: ${filename}`);
+                
+                // Create and click download link
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `MGVCL_Results_${this.currentSessionId}.xlsx`;
+                a.download = filename;
+                a.style.display = 'none';
                 document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                a.remove();
+                console.log('Download link created and appended to document');
                 
-                this.addLogEntry('success', 'Results downloaded successfully');
-            } else {
-                throw new Error('Download failed');
+                // Trigger download
+                console.log('Triggering download click...');
+                a.click();
+                
+                // Clean up
+                setTimeout(() => {
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                    console.log('Download cleanup completed');
+                    this.addLogEntry('success', 'Results downloaded successfully');
+                }, 500);            } else {
+                // Try to get error details
+                let errorMessage = 'Download failed';
+                try {
+                    const errorData = await response.json();
+                    
+                    // Implement retry mechanism
+                    if (retryCount < 3) {
+                        console.log(`Download attempt ${retryCount + 1} failed, retrying in 3 seconds...`);
+                        this.addLogEntry('warning', `Download attempt failed, retrying in 3 seconds...`);
+                        
+                        // Wait and retry
+                        setTimeout(() => {
+                            this.handleDownloadResults(retryCount + 1);
+                        }, 3000);
+                        return;
+                    }
+                    errorMessage = errorData.error || errorMessage;
+                } catch (e) {
+                    errorMessage += ` (Status: ${response.status})`;
+                }
+                throw new Error(errorMessage);
             }
         } catch (error) {
+            console.error('Download error:', error);
             this.addLogEntry('error', `Download error: ${error.message}`);
         }
     }
